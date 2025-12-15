@@ -693,7 +693,6 @@ class GeneticProgramming:
                                       use_gpu=self.use_gpu,
                                       use_tpu=self.use_tpu,
                                       n_folds=self.n_folds,
-                                      omics_types=self.omics_types,
                                       max_depth_range=self.max_depth_range)
                 
                 self.fitness_scores = list(executor.map(fitness_func, self.population))
@@ -721,7 +720,6 @@ class GeneticProgramming:
                                   use_gpu: bool,
                                   use_tpu: bool,
                                   n_folds: int,
-                                  omics_types: List[str],
                                   max_depth_range: Tuple[int, int]) -> float:
         """
         Wrapper statique pour l'évaluation de fitness (nécessaire pour la parallélisation)
@@ -731,7 +729,6 @@ class GeneticProgramming:
             use_gpu=use_gpu,
             use_tpu=use_tpu,
             n_folds=n_folds,
-            omics_types=omics_types,
             max_depth_range=max_depth_range,
             n_jobs=1
         )
