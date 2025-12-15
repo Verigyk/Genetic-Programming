@@ -33,7 +33,7 @@ try:
     import cupy as cp
     GPU_AVAILABLE = True
     device_id = cp.cuda.get_device_id()
-    print(f"✓ GPU disponible: {cp.cuda.Device(device_id).attributes["name"]}")
+    print(f"""✓ GPU disponible: {cp.cuda.Device(device_id).attributes["name"]}""")
 except ImportError:
     GPU_AVAILABLE = False
     cp = np  # Fallback to numpy
