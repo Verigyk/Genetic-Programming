@@ -528,6 +528,7 @@ class GeneticProgramming:
     """Algorithme de Genetic Programming avec parallélisation GPU/TPU/CPU"""
     
     def __init__(self,
+                 dataframes,
                  population_size: int = 50,
                  max_generations: int = 100,
                  parent_selection_rate: float = 0.16,
@@ -538,11 +539,8 @@ class GeneticProgramming:
                  max_depth_range: Tuple[int, int] = (1, 4),
                  max_children_range: Tuple[int, int] = (1, 4),
                  feature_algos: List[str] = None,
-                 omics_types: List[str] = None,
                  feature_range: Tuple[int, int] = (5, 100),
                  use_real_fitness: bool = False,
-                 omics_data: Dict[str, np.ndarray] = None,
-                 survival_data: Tuple[np.ndarray, np.ndarray] = None,
                  n_folds: int = 5,
                  use_gpu: bool = False,
                  use_tpu: bool = False,
@@ -559,6 +557,7 @@ class GeneticProgramming:
         self.max_children_range = max_children_range
         self.feature_range = feature_range
         self.n_folds = n_folds
+        self.dataframes = dataframes
         
         # Configuration TPU (priorité sur GPU)
         self.use_tpu = use_tpu and TPU_AVAILABLE
@@ -596,22 +595,13 @@ class GeneticProgramming:
             self.feature_algos = feature_algos
         
         # Types d'omics selon le papier
-        if omics_types is None:
-            self.omics_types = ['miRNA', 'GeneExpression', 'Methylation']
-        else:
-            self.omics_types = omics_types
+        self.omics_types = ['Clinical Data', 'Pam50', 'Oncotype21']
         
         # Configuration pour fitness réelle
         self.use_real_fitness = use_real_fitness and SKSURV_AVAILABLE
-        self.omics_data = omics_data
-        self.survival_data = survival_data
         
         if self.use_real_fitness and not SKSURV_AVAILABLE:
             print("WARNING: Cannot use real fitness - scikit-survival not available")
-            self.use_real_fitness = False
-        
-        if self.use_real_fitness and (omics_data is None or survival_data is None):
-            print("WARNING: Real fitness requires omics_data and survival_data")
             self.use_real_fitness = False
         
         self.population: List[TreeNode] = []
@@ -1162,7 +1152,7 @@ if __name__ == "__main__":
             print(f"\n✓ Données chargées avec succès!")
             print(f"\nTypes d'omics disponibles:")
 
-            print(loader.data_frames)
+            #print(loader.data_frames)
             
             # Créer et exécuter le Genetic Programming
             print(f"\n{'='*60}")
@@ -1184,9 +1174,7 @@ if __name__ == "__main__":
                 max_children_range=(1, 3),
                 feature_range=(5, 30),
                 use_real_fitness=SKSURV_AVAILABLE,  # Active si disponible
-                omics_data=omics_data,
-                survival_data=(survival_times, survival_events),
-                omics_types=available_omics,  # Utiliser les omics chargés
+                dataframes=loader.data_frames,
                 n_folds=3,
                 use_gpu=False,
                 use_tpu=False,
@@ -1221,124 +1209,3 @@ if __name__ == "__main__":
     else:
         print(f"\n⚠ Répertoire '{data_directory}' introuvable")
         print(f"\nPassage à l'OPTION 2...")
-    
-    # =========================================================================
-    # OPTION 2: Chargement uniquement des fichiers omics (sans everything.csv)
-    # =========================================================================
-    print(f"\n{'='*60}")
-    print("OPTION 2: Chargement uniquement fichiers omics")
-    print("="*60)
-    
-    loader_omics_only = CSVDataLoader()
-    
-    # Charger uniquement les fichiers d'expression génique
-    file_paths_omics = {
-        'oncotype21.csv': './data/oncotype21.csv',
-        'pam50.csv': './data/pam50.csv',
-        'union_pam50_oncotype.csv': './data/union_pam50_oncotype.csv',
-        'intersection_pam50_oncotype.csv': './data/intersection_pam50_oncotype.csv'
-    }
-    
-    loader_omics_only.load_csv_files(file_paths_omics, verbose=True)
-    
-    if loader_omics_only.data_frames:
-        print(f"\n✓ Fichiers omics chargés!")
-        
-        # Générer des données de survie synthétiques
-        # (basées sur le nombre d'échantillons détecté)
-        first_df = next(iter(loader_omics_only.data_frames.values()))
-        if first_df.index.name == 'Hugo_Symbol':
-            n_samples = len(first_df.columns)
-            loader_omics_only.sample_ids = first_df.columns.values
-        else:
-            n_samples = len(first_df)
-            loader_omics_only.sample_ids = first_df.index.values
-        
-        print(f"\nGénération de données de survie synthétiques pour {n_samples} échantillons...")
-        loader_omics_only.survival_times = np.random.exponential(scale=10, size=n_samples)
-        loader_omics_only.survival_events = np.random.binomial(1, 0.7, size=n_samples)
-        
-        # Préparer les données omics
-        loader_omics_only.prepare_omics_data(align_samples=False)
-        
-        print(f"\n✓ Prêt pour le Genetic Programming!")
-    
-    # =========================================================================
-    # OPTION 3: Guide d'utilisation
-    # =========================================================================
-    print(f"\n{'='*60}")
-    print("GUIDE D'UTILISATION")
-    print(f"{'='*60}")
-    print("""
-CAS 1: Vous avez everything.csv avec colonnes de survie
--------------------------------------------------------
-loader = CSVDataLoader.load_from_directory(
-    directory='./data',
-    time_column='OS_MONTHS',      # ou None pour auto-détection
-    event_column='OS_STATUS'      # ou None pour auto-détection
-)
-
-CAS 2: Vous avez everything.csv SANS colonnes de survie
---------------------------------------------------------
-loader = CSVDataLoader.load_from_directory(
-    directory='./data',
-    generate_synthetic_survival=True  # Génère automatiquement
-)
-
-CAS 3: Vous n'avez PAS everything.csv
---------------------------------------
-loader = CSVDataLoader()
-file_paths = {
-    'oncotype21.csv': './data/oncotype21.csv',
-    'pam50.csv': './data/pam50.csv',
-    # ... autres fichiers
-}
-loader.load_csv_files(file_paths)
-
-# Générer données de survie synthétiques
-n_samples = len(loader.data_frames['oncotype21.csv'].columns)
-loader.survival_times = np.random.exponential(10, n_samples)
-loader.survival_events = np.random.binomial(1, 0.7, n_samples)
-loader.sample_ids = loader.data_frames['oncotype21.csv'].columns.values
-
-# Préparer omics
-loader.prepare_omics_data(align_samples=False)
-
-CAS 4: Vous avez vos propres données de survie
------------------------------------------------
-# Charger les omics
-loader = CSVDataLoader()
-loader.load_csv_files(file_paths)
-
-# Définir vos propres données de survie
-loader.survival_times = your_times_array      # numpy array
-loader.survival_events = your_events_array    # numpy array (0/1)
-loader.sample_ids = your_sample_ids          # numpy array
-
-# Préparer
-loader.prepare_omics_data(align_samples=True)
-
-Colonnes auto-détectées pour survie:
--------------------------------------
-Temps: OS_MONTHS, OS.MONTHS, TIME, SURVIVAL_TIME, TIME_TO_EVENT
-Événements: OS_STATUS, OS.STATUS, STATUS, EVENT, VITAL_STATUS
-
-Formats d'événements acceptés:
-- Numérique: 0/1
-- Texte: LIVING/DECEASED, ALIVE/DEAD, YES/NO
-
-Structure des fichiers CSV:
-----------------------------
-1. oncotype21.csv, pam50.csv, etc.:
-   Index: Hugo_Symbol (gènes)
-   Colonnes: Échantillons (ex: TCGA-XX-XXXX)
-   Valeurs: Expression
-
-2. everything.csv (optionnel):
-   Index: Sample ID (échantillons)
-   Colonnes: Variables cliniques
-   
-Note: Les fichiers seront automatiquement transposés si nécessaire
-      pour avoir (n_samples, n_features)
-""")
-    print(f"{'='*60}")
