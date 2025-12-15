@@ -1005,7 +1005,7 @@ if __name__ == "__main__":
     results = []
     
     for config_name, use_gpu, use_tpu in test_configs:
-        if not use_gpu:
+        if not use_gpu or not use_tpu:
             continue
 
         print(f"\nTest avec {config_name}:")
