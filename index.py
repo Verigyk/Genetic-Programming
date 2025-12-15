@@ -1141,7 +1141,7 @@ if __name__ == "__main__":
     print("-"*60)
     
     # Spécifier le répertoire contenant vos fichiers CSV
-    data_directory = "./data"  # MODIFIEZ CE CHEMIN
+    data_directory = "./"  # MODIFIEZ CE CHEMIN
     
     # Vérifier si le répertoire existe
     if os.path.exists(data_directory):
