@@ -689,7 +689,6 @@ class GeneticProgramming:
             
             with executor_class(max_workers=self.n_jobs) as executor:
                 fitness_func = partial(self._evaluate_fitness_wrapper, 
-                                      omics_data=self.omics_data,
                                       survival_data=self.survival_data,
                                       use_real_fitness=self.use_real_fitness,
                                       use_gpu=self.use_gpu,
@@ -719,7 +718,6 @@ class GeneticProgramming:
     
     @staticmethod
     def _evaluate_fitness_wrapper(individual: TreeNode, 
-                                  omics_data: Dict[str, np.ndarray],
                                   survival_data: Tuple[np.ndarray, np.ndarray],
                                   use_real_fitness: bool,
                                   use_gpu: bool,
@@ -732,7 +730,6 @@ class GeneticProgramming:
         """
         temp_gp = GeneticProgramming(
             use_real_fitness=use_real_fitness,
-            omics_data=omics_data,
             survival_data=survival_data,
             use_gpu=use_gpu,
             use_tpu=use_tpu,
