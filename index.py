@@ -58,7 +58,7 @@ try:
     else:
         print("INFO: TPU not detected. JAX will use CPU/GPU.")
         
-except ImportError:
+except Exception:
     TPU_AVAILABLE = False
     jnp = np  # Fallback to numpy
     print("INFO: JAX not installed. TPU acceleration unavailable.")
