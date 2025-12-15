@@ -82,6 +82,14 @@ class CSVDataLoader:
             'pam50.csv': 'Hugo_Symbol',
             'intersection_pam50_oncotype.csv': 'Hugo_Symbol'
         }
+
+        self.files = {
+            'everything.csv',
+            'oncotype21.csv',
+            'union_pam50_oncotype.csv',
+            'pam50.csv',
+            'intersection_pam50_oncotype.csv'
+        }
         
         # Mapper les fichiers aux types d'omics
         self.file_to_omics_mapping = {
@@ -232,54 +240,6 @@ class CSVDataLoader:
         
         return self.survival_times, self.survival_events
     
-    def prepare_omics_data(self, align_samples: bool = True) -> Dict[str, np.ndarray]:
-        """
-        Prépare les données omics au format attendu par GeneticProgramming
-        
-        Args:
-            align_samples: Aligner les échantillons avec everything.csv
-        
-        Returns:
-            Dictionnaire {type_omics: array_features}
-            Format: (n_samples, n_features) - échantillons en lignes, features en colonnes
-        """
-        print(f"\n{'='*60}")
-        print("PRÉPARATION DES DONNÉES OMICS")
-        print(f"{'='*60}")
-        
-        for file_name, omics_type in self.file_to_omics_mapping.items():
-            if file_name not in self.data_frames:
-                print(f"⚠ {file_name} non chargé, ignoré")
-                continue
-            
-            df = self.data_frames[file_name].copy()
-            
-            # Si l'index est Hugo_Symbol, transposer pour avoir échantillons en lignes
-            if df.index.name == 'Hugo_Symbol':
-                df = df.T
-                print(f"  Transposition de {file_name} (Hugo_Symbol → Sample)")
-            
-            # Aligner avec les échantillons de everything.csv si demandé
-            if align_samples and self.sample_ids is not None:
-                common_samples = df.index.intersection(self.sample_ids)
-                
-                if len(common_samples) == 0:
-                    print(f"⚠ Aucun échantillon commun avec everything.csv pour {file_name}")
-                    continue
-                
-                # Réordonner selon l'ordre de everything.csv
-                df = df.loc[common_samples]
-                df = df.reindex(self.sample_ids, fill_value=0)
-                
-                print(f"✓ {omics_type:35s} {df.shape} ({len(common_samples)} échantillons alignés)")
-            else:
-                print(f"✓ {omics_type:35s} {df.shape}")
-            
-            # Convertir en array numpy
-            self.omics_data[omics_type] = df.values.astype(np.float32)
-        
-        return self.omics_data
-    
     def get_data_for_gp(self) -> Tuple[Dict[str, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
         """
         Retourne les données prêtes pour GeneticProgramming
@@ -328,34 +288,6 @@ class CSVDataLoader:
         
         # Charger les fichiers
         loader.load_csv_files(file_paths)
-        
-        # Extraire les données de survie
-        try:
-            loader.extract_survival_data(
-                time_column=time_column, 
-                event_column=event_column,
-                generate_synthetic=generate_synthetic_survival
-            )
-        except Exception as e:
-            print(f"⚠ Erreur lors de l'extraction des données de survie: {str(e)}")
-            if generate_synthetic_survival:
-                print("  Génération de données de survie synthétiques...")
-                # Obtenir le nombre d'échantillons depuis les fichiers omics chargés
-                n_samples = 200
-                for df in loader.data_frames.values():
-                    if df.index.name != 'Hugo_Symbol':
-                        n_samples = len(df)
-                        break
-                    else:
-                        n_samples = len(df.columns)
-                        break
-                
-                loader.survival_times = np.random.exponential(scale=10, size=n_samples)
-                loader.survival_events = np.random.binomial(1, 0.7, size=n_samples)
-                loader.sample_ids = np.array([f"Sample_{i}" for i in range(n_samples)])
-        
-        # Préparer les données omics
-        loader.prepare_omics_data(align_samples=(loader.sample_ids is not None))
         
         return loader
 
@@ -1227,13 +1159,10 @@ if __name__ == "__main__":
                 generate_synthetic_survival=True  # Générer si absent
             )
             
-            # Récupérer les données prêtes pour GP
-            omics_data, (survival_times, survival_events) = loader.get_data_for_gp()
-            
             print(f"\n✓ Données chargées avec succès!")
             print(f"\nTypes d'omics disponibles:")
-            for omics_type, data in omics_data.items():
-                print(f"  - {omics_type:40s} {data.shape}")
+            for i in range(len(loader.files)):
+                print(f"  - {loader.files[i]:40s} {loader.data_frames[i].shape}")
             
             # Créer et exécuter le Genetic Programming
             print(f"\n{'='*60}")
@@ -1241,7 +1170,7 @@ if __name__ == "__main__":
             print(f"{'='*60}")
             
             # Extraire les types d'omics disponibles
-            available_omics = list(omics_data.keys())
+            available_omics = loader.files
             
             gp = GeneticProgramming(
                 population_size=20,
