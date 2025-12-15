@@ -1149,8 +1149,6 @@ if __name__ == "__main__":
             # Charger automatiquement tous les fichiers
             loader = CSVDataLoader.load_from_directory(
                 directory=data_directory,
-                time_column='OS_MONTHS',      # Nom de la colonne temps
-                event_column='OS_STATUS',     # Nom de la colonne événement
                 files_to_load=[               # Fichiers à charger (optionnel)
                     'everything.csv',
                     'oncotype21.csv',
