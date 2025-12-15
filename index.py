@@ -1,7 +1,47 @@
 import random
 import copy
-from typing import List, Tuple, Optional
+import numpy as np
+from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
+from sklearn.feature_selection import (
+    VarianceThreshold, SelectKBest, f_regression,
+    mutual_info_regression
+)
+from sklearn.ensemble import (
+    RandomForestRegressor, GradientBoostingRegressor,
+    AdaBoostRegressor, ExtraTreesRegressor
+)
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import KFold
+from scipy.stats import pearsonr
+import multiprocessing as mp
+from functools import partial
+
+# Import pour Gradient Boosting Survival
+try:
+    from sksurv.ensemble import GradientBoostingSurvivalAnalysis
+    from sksurv.metrics import concordance_index_censored
+    from sksurv.util import Surv
+    SKSURV_AVAILABLE = True
+except ImportError:
+    SKSURV_AVAILABLE = False
+    print("WARNING: scikit-survival not installed. Install with: pip install scikit-survival")
+    print("Falling back to simulated fitness calculation.")
+
+# Import pour GPU (CUDA avec CuPy)
+try:
+    import cupy as cp
+    GPU_AVAILABLE = True
+    print(f"✓ GPU disponible: {cp.cuda.Device().name}")
+except ImportError:
+    GPU_AVAILABLE = False
+    cp = np  # Fallback to numpy
+    print("INFO: CuPy not installed. Running on CPU only.")
+    print("For GPU acceleration, install with: pip install cupy-cuda11x or cupy-cuda12x")
+
+# Import pour parallélisation CPU
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import os
 
 @dataclass
 class TreeNode:
@@ -42,8 +82,168 @@ class TreeNode:
         return None
 
 
+class FeatureSelector:
+    """
+    Classe pour implémenter tous les algorithmes de sélection de features
+    mentionnés dans le papier - avec support GPU optionnel
+    """
+    
+    @staticmethod
+    def select_features(X: np.ndarray, y: np.ndarray, method: str, 
+                       n_features: int, feature_names: List[str] = None,
+                       use_gpu: bool = False) -> Tuple[np.ndarray, List[int]]:
+        """
+        Sélectionne les meilleures features selon la méthode spécifiée
+        
+        Args:
+            X: Matrice de features (n_samples, n_features)
+            y: Variable cible (n_samples,)
+            method: Nom de la méthode de sélection
+            n_features: Nombre de features à sélectionner
+            feature_names: Noms optionnels des features
+            use_gpu: Utiliser le GPU si disponible (pour certaines opérations)
+            
+        Returns:
+            X_selected: Matrice avec features sélectionnées
+            selected_indices: Indices des features sélectionnées
+        """
+        if X.shape[1] <= n_features:
+            return X, list(range(X.shape[1]))
+        
+        n_features = min(n_features, X.shape[1])
+        
+        if method == 'Variance':
+            return FeatureSelector._variance_selection(X, n_features, use_gpu)
+        elif method == 'Pearson':
+            return FeatureSelector._pearson_selection(X, y, n_features, use_gpu)
+        elif method == 'RandomForest':
+            return FeatureSelector._random_forest_selection(X, y, n_features)
+        elif method == 'GradientBoosting':
+            return FeatureSelector._gradient_boosting_selection(X, y, n_features)
+        elif method == 'AdaBoost':
+            return FeatureSelector._adaboost_selection(X, y, n_features)
+        elif method == 'ExtraTrees':
+            return FeatureSelector._extra_trees_selection(X, y, n_features)
+        elif method == 'MutualInfo':
+            return FeatureSelector._mutual_info_selection(X, y, n_features)
+        elif method == 'FRegression':
+            return FeatureSelector._f_regression_selection(X, y, n_features)
+        else:
+            # Fallback: sélection aléatoire
+            indices = np.random.choice(X.shape[1], n_features, replace=False)
+            return X[:, indices], list(indices)
+    
+    @staticmethod
+    def _variance_selection(X: np.ndarray, n_features: int, use_gpu: bool = False) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur la variance des features - avec support GPU"""
+        if use_gpu and GPU_AVAILABLE:
+            X_gpu = cp.asarray(X)
+            variances = cp.var(X_gpu, axis=0)
+            top_indices = cp.argsort(variances)[-n_features:][::-1]
+            top_indices = cp.asnumpy(top_indices)
+        else:
+            variances = np.var(X, axis=0)
+            top_indices = np.argsort(variances)[-n_features:][::-1]
+        return X[:, top_indices], list(top_indices)
+    
+    @staticmethod
+    def _pearson_selection(X: np.ndarray, y: np.ndarray, n_features: int, use_gpu: bool = False) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur la corrélation de Pearson - avec support GPU"""
+        if use_gpu and GPU_AVAILABLE:
+            X_gpu = cp.asarray(X)
+            y_gpu = cp.asarray(y)
+            
+            # Calcul des corrélations sur GPU
+            X_centered = X_gpu - cp.mean(X_gpu, axis=0)
+            y_centered = y_gpu - cp.mean(y_gpu)
+            
+            numerator = cp.abs(cp.dot(X_centered.T, y_centered))
+            denominator = cp.sqrt(cp.sum(X_centered**2, axis=0) * cp.sum(y_centered**2))
+            
+            correlations = numerator / (denominator + 1e-10)
+            correlations = cp.nan_to_num(correlations, 0)
+            top_indices = cp.argsort(correlations)[-n_features:][::-1]
+            top_indices = cp.asnumpy(top_indices)
+        else:
+            correlations = np.abs([pearsonr(X[:, i], y)[0] if len(np.unique(X[:, i])) > 1 
+                                   else 0 for i in range(X.shape[1])])
+            correlations = np.nan_to_num(correlations, 0)
+            top_indices = np.argsort(correlations)[-n_features:][::-1]
+        
+        return X[:, top_indices], list(top_indices)
+    
+    @staticmethod
+    def _random_forest_selection(X: np.ndarray, y: np.ndarray, n_features: int) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur l'importance des features via Random Forest"""
+        try:
+            rf = RandomForestRegressor(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1)
+            rf.fit(X, y)
+            importances = rf.feature_importances_
+            top_indices = np.argsort(importances)[-n_features:][::-1]
+            return X[:, top_indices], list(top_indices)
+        except:
+            return FeatureSelector._variance_selection(X, n_features)
+    
+    @staticmethod
+    def _gradient_boosting_selection(X: np.ndarray, y: np.ndarray, n_features: int) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur Gradient Boosting"""
+        try:
+            gb = GradientBoostingRegressor(n_estimators=50, max_depth=3, random_state=42)
+            gb.fit(X, y)
+            importances = gb.feature_importances_
+            top_indices = np.argsort(importances)[-n_features:][::-1]
+            return X[:, top_indices], list(top_indices)
+        except:
+            return FeatureSelector._variance_selection(X, n_features)
+    
+    @staticmethod
+    def _adaboost_selection(X: np.ndarray, y: np.ndarray, n_features: int) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur AdaBoost"""
+        try:
+            ada = AdaBoostRegressor(n_estimators=50, random_state=42)
+            ada.fit(X, y)
+            importances = ada.feature_importances_
+            top_indices = np.argsort(importances)[-n_features:][::-1]
+            return X[:, top_indices], list(top_indices)
+        except:
+            return FeatureSelector._variance_selection(X, n_features)
+    
+    @staticmethod
+    def _extra_trees_selection(X: np.ndarray, y: np.ndarray, n_features: int) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur Extra Trees"""
+        try:
+            et = ExtraTreesRegressor(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1)
+            et.fit(X, y)
+            importances = et.feature_importances_
+            top_indices = np.argsort(importances)[-n_features:][::-1]
+            return X[:, top_indices], list(top_indices)
+        except:
+            return FeatureSelector._variance_selection(X, n_features)
+    
+    @staticmethod
+    def _mutual_info_selection(X: np.ndarray, y: np.ndarray, n_features: int) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur l'information mutuelle"""
+        try:
+            mi_scores = mutual_info_regression(X, y, random_state=42)
+            top_indices = np.argsort(mi_scores)[-n_features:][::-1]
+            return X[:, top_indices], list(top_indices)
+        except:
+            return FeatureSelector._variance_selection(X, n_features)
+    
+    @staticmethod
+    def _f_regression_selection(X: np.ndarray, y: np.ndarray, n_features: int) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur le F-score (régression univariée)"""
+        try:
+            selector = SelectKBest(f_regression, k=n_features)
+            selector.fit(X, y)
+            selected_indices = selector.get_support(indices=True)
+            return X[:, selected_indices], list(selected_indices)
+        except:
+            return FeatureSelector._variance_selection(X, n_features)
+
+
 class GeneticProgramming:
-    """Algorithme de Genetic Programming"""
+    """Algorithme de Genetic Programming avec parallélisation GPU/CPU"""
     
     def __init__(self,
                  population_size: int = 50,
@@ -57,7 +257,13 @@ class GeneticProgramming:
                  max_children_range: Tuple[int, int] = (1, 4),
                  feature_algos: List[str] = None,
                  omics_types: List[str] = None,
-                 feature_range: Tuple[int, int] = (5, 100)):
+                 feature_range: Tuple[int, int] = (5, 100),
+                 use_real_fitness: bool = False,
+                 omics_data: Dict[str, np.ndarray] = None,
+                 survival_data: Tuple[np.ndarray, np.ndarray] = None,
+                 n_folds: int = 5,
+                 use_gpu: bool = False,
+                 n_jobs: int = -1):
         
         self.population_size = population_size
         self.max_generations = max_generations
@@ -69,6 +275,23 @@ class GeneticProgramming:
         self.max_depth_range = max_depth_range
         self.max_children_range = max_children_range
         self.feature_range = feature_range
+        self.n_folds = n_folds
+        
+        # Configuration GPU
+        self.use_gpu = use_gpu and GPU_AVAILABLE
+        if use_gpu and not GPU_AVAILABLE:
+            print("WARNING: GPU requested but CuPy not available. Using CPU.")
+            self.use_gpu = False
+        
+        # Configuration parallélisation CPU
+        if n_jobs == -1:
+            self.n_jobs = max(1, mp.cpu_count() - 1)
+        else:
+            self.n_jobs = max(1, n_jobs)
+        
+        print(f"Configuration parallélisation:")
+        print(f"  - GPU: {'Activé' if self.use_gpu else 'Désactivé'}")
+        print(f"  - CPU workers: {self.n_jobs}")
         
         # Feature selection algorithms selon le papier
         if feature_algos is None:
@@ -79,11 +302,24 @@ class GeneticProgramming:
         else:
             self.feature_algos = feature_algos
         
-        # Types d'omics selon le papier (miRNA, gene expression, methylation)
+        # Types d'omics selon le papier
         if omics_types is None:
             self.omics_types = ['miRNA', 'GeneExpression', 'Methylation']
         else:
             self.omics_types = omics_types
+        
+        # Configuration pour fitness réelle
+        self.use_real_fitness = use_real_fitness and SKSURV_AVAILABLE
+        self.omics_data = omics_data
+        self.survival_data = survival_data
+        
+        if self.use_real_fitness and not SKSURV_AVAILABLE:
+            print("WARNING: Cannot use real fitness - scikit-survival not available")
+            self.use_real_fitness = False
+        
+        if self.use_real_fitness and (omics_data is None or survival_data is None):
+            print("WARNING: Real fitness requires omics_data and survival_data")
+            self.use_real_fitness = False
         
         self.population: List[TreeNode] = []
         self.fitness_scores: List[float] = []
@@ -156,13 +392,43 @@ class GeneticProgramming:
         return node
     
     def fitness_calculation(self):
-        """Calcul de la fitness pour toute la population"""
-        print(f"\nGénération {self.generation}: Calcul de la fitness...")
-        self.fitness_scores = []
+        """
+        Calcul de la fitness pour toute la population
+        Avec parallélisation pour accélérer le calcul
+        """
+        mode = "RÉELLE (Gradient Boosting Survival)" if self.use_real_fitness else "SIMULÉE"
+        parallel_mode = "GPU" if self.use_gpu else f"CPU ({self.n_jobs} workers)"
+        print(f"\nGénération {self.generation}: Calcul de la fitness ({mode}, {parallel_mode})...")
         
-        for individual in self.population:
-            fitness = self._evaluate_fitness(individual)
-            self.fitness_scores.append(fitness)
+        # Parallélisation du calcul de fitness
+        if self.n_jobs > 1 and len(self.population) > 5:
+            # Utiliser ProcessPoolExecutor pour la parallélisation
+            # Note: Pour la fitness réelle, ThreadPoolExecutor peut être mieux
+            # car il évite la sérialisation des données
+            executor_class = ThreadPoolExecutor if self.use_real_fitness else ProcessPoolExecutor
+            
+            with executor_class(max_workers=self.n_jobs) as executor:
+                # Créer une fonction partielle avec les paramètres nécessaires
+                fitness_func = partial(self._evaluate_fitness_wrapper, 
+                                      omics_data=self.omics_data,
+                                      survival_data=self.survival_data,
+                                      use_real_fitness=self.use_real_fitness,
+                                      use_gpu=self.use_gpu,
+                                      n_folds=self.n_folds,
+                                      omics_types=self.omics_types,
+                                      max_depth_range=self.max_depth_range)
+                
+                # Soumettre tous les individus
+                self.fitness_scores = list(executor.map(fitness_func, self.population))
+        else:
+            # Calcul séquentiel pour petites populations
+            self.fitness_scores = []
+            for i, individual in enumerate(self.population):
+                fitness = self._evaluate_fitness(individual)
+                self.fitness_scores.append(fitness)
+                
+                if self.use_real_fitness and (i + 1) % 5 == 0:
+                    print(f"  Progression: {i + 1}/{len(self.population)} individus évalués")
         
         # Mise à jour du meilleur individu
         max_fitness_idx = self.fitness_scores.index(max(self.fitness_scores))
@@ -173,26 +439,116 @@ class GeneticProgramming:
         avg_fitness = sum(self.fitness_scores) / len(self.fitness_scores)
         print(f"Fitness moyenne: {avg_fitness:.4f}, Meilleure fitness: {self.best_fitness:.4f}")
     
+    @staticmethod
+    def _evaluate_fitness_wrapper(individual: TreeNode, 
+                                  omics_data: Dict[str, np.ndarray],
+                                  survival_data: Tuple[np.ndarray, np.ndarray],
+                                  use_real_fitness: bool,
+                                  use_gpu: bool,
+                                  n_folds: int,
+                                  omics_types: List[str],
+                                  max_depth_range: Tuple[int, int]) -> float:
+        """
+        Wrapper statique pour l'évaluation de fitness (nécessaire pour la parallélisation)
+        """
+        # Créer une instance temporaire pour utiliser les méthodes d'instance
+        temp_gp = GeneticProgramming(
+            use_real_fitness=use_real_fitness,
+            omics_data=omics_data,
+            survival_data=survival_data,
+            use_gpu=use_gpu,
+            n_folds=n_folds,
+            omics_types=omics_types,
+            max_depth_range=max_depth_range,
+            n_jobs=1  # Pas de parallélisation récursive
+        )
+        return temp_gp._evaluate_fitness(individual)
+    
     def _evaluate_fitness(self, individual: TreeNode) -> float:
         """
         Évalue la fitness d'un individu
-        Dans le papier, la fitness est le C-index d'un modèle de survie
-        avec validation croisée 5-fold
         
-        Cette implémentation est une SIMULATION pour démonstration.
-        À REMPLACER par votre vrai calcul de C-index avec vos données réelles.
+        Si use_real_fitness=True: Calcule le C-index avec Gradient Boosting Survival
+        Sinon: Utilise une fitness simulée basée sur la structure
         """
-        # SIMULATION: Dans la vraie implémentation, vous devriez:
-        # 1. Parcourir l'arbre de bas en haut (bottom-up)
-        # 2. À chaque feuille, récupérer les données d'omics correspondantes
-        # 3. À chaque noeud intermédiaire:
-        #    - Concaténer les features des enfants
-        #    - Appliquer l'algorithme de sélection de features
-        #    - Sélectionner num_features features
-        # 4. À la racine, entraîner un modèle Gradient Boosting Survival
-        # 5. Calculer le C-index avec validation croisée 5-fold
-        
-        # Pour la simulation, on évalue basé sur la structure
+        if self.use_real_fitness:
+            return self._evaluate_real_fitness(individual)
+        else:
+            return self._evaluate_simulated_fitness(individual)
+    
+    def _evaluate_real_fitness(self, individual: TreeNode) -> float:
+        """
+        Calcule la fitness réelle avec Gradient Boosting Survival et validation croisée 5-fold
+        Retourne le C-index moyen
+        """
+        try:
+            # Intégrer les features selon l'arbre chromosomique
+            times, events = self.survival_data
+            
+            # Créer un y dummy pour la sélection de features (on utilise times)
+            y_dummy = times
+            
+            integrated_features = self._integrate_and_select_features(
+                individual, self.omics_data, y_dummy
+            )
+            
+            # Vérifier que nous avons des features
+            if integrated_features.size == 0 or integrated_features.shape[1] == 0:
+                return 0.0
+            
+            # Validation croisée 5-fold
+            kf = KFold(n_splits=self.n_folds, shuffle=True, random_state=42)
+            c_indices = []
+            
+            for train_idx, val_idx in kf.split(integrated_features):
+                X_train = integrated_features[train_idx]
+                X_val = integrated_features[val_idx]
+                
+                # Créer les structured arrays pour survival
+                y_train = Surv.from_arrays(
+                    event=events[train_idx].astype(bool),
+                    time=times[train_idx]
+                )
+                y_val = Surv.from_arrays(
+                    event=events[val_idx].astype(bool),
+                    time=times[val_idx]
+                )
+                
+                # Entraîner le modèle Gradient Boosting Survival
+                gb_surv = GradientBoostingSurvivalAnalysis(
+                    n_estimators=100,
+                    learning_rate=0.1,
+                    max_depth=3,
+                    random_state=42
+                )
+                
+                gb_surv.fit(X_train, y_train)
+                
+                # Prédire et calculer le C-index
+                predictions = gb_surv.predict(X_val)
+                
+                # Calculer le C-index
+                c_index = concordance_index_censored(
+                    events[val_idx].astype(bool),
+                    times[val_idx],
+                    predictions
+                )[0]
+                
+                c_indices.append(c_index)
+            
+            # Retourner le C-index moyen
+            mean_c_index = np.mean(c_indices)
+            return mean_c_index
+            
+        except Exception as e:
+            print(f"Error in real fitness calculation: {str(e)}")
+            return 0.0
+    
+    def _evaluate_simulated_fitness(self, individual: TreeNode) -> float:
+        """
+        Évalue la fitness simulée basée sur la structure de l'arbre
+        Utilisé quand use_real_fitness=False
+        """
         nodes = individual.get_all_nodes()
         
         # Bonus pour diversité des omics
@@ -222,6 +578,52 @@ class GeneticProgramming:
         score = score * 0.8 + random.uniform(0, 0.2)  # Simulation de variabilité
         
         return score
+    
+    def _integrate_and_select_features(self, individual: TreeNode, 
+                                      omics_data: Dict[str, np.ndarray],
+                                      y: np.ndarray) -> np.ndarray:
+        """
+        Intègre les données multi-omics selon l'arbre chromosomique (bottom-up)
+        Avec support GPU pour les opérations de sélection
+        """
+        node_features = {}
+        
+        def process_node(node: TreeNode) -> np.ndarray:
+            """Traite un noeud récursivement (bottom-up)"""
+            if id(node) in node_features:
+                return node_features[id(node)]
+            
+            if node.is_leaf():
+                features = omics_data.get(node.omics_type, np.array([]))
+                node_features[id(node)] = features
+                return features
+            
+            child_features = []
+            for child in node.children:
+                child_result = process_node(child)
+                if child_result.size > 0:
+                    child_features.append(child_result)
+            
+            if not child_features:
+                node_features[id(node)] = np.array([])
+                return np.array([])
+            
+            concatenated = np.hstack(child_features)
+            
+            # Appliquer la sélection de features avec GPU si disponible
+            selected_features, _ = FeatureSelector.select_features(
+                X=concatenated,
+                y=y,
+                method=node.feature_selection_algo,
+                n_features=min(node.num_features, concatenated.shape[1]),
+                use_gpu=self.use_gpu
+            )
+            
+            node_features[id(node)] = selected_features
+            return selected_features
+        
+        final_features = process_node(individual)
+        return final_features
     
     def check_stopping_criteria(self) -> bool:
         """Vérifie les critères d'arrêt"""
@@ -435,42 +837,198 @@ class GeneticProgramming:
 
 # Exemple d'utilisation
 if __name__ == "__main__":
-    # Création et exécution de l'algorithme avec paramètres du papier
-    gp = GeneticProgramming(
-        population_size=50,          # Taille de population du papier
-        max_generations=100,         # Nombre de générations du papier
-        parent_selection_rate=0.16,  # 16% comme spécifié
-        mutation_rate=0.3,           # Taux de mutation du papier (0.3 = 30%)
-        elitism_count=8,             # 8 chromosomes élites (16% de 50)
-        random_injection_count=8,    # 8 nouveaux chromosomes aléatoires par génération
+    print("="*60)
+    print("DÉMONSTRATION AVEC PARALLÉLISATION GPU/CPU")
+    print("="*60)
+    
+    # Générer des données synthétiques
+    np.random.seed(42)
+    n_samples = 200
+    n_features = 100
+    
+    X_synthetic = np.random.randn(n_samples, n_features)
+    y_synthetic = np.random.exponential(scale=10, size=n_samples) + \
+                  0.5 * X_synthetic[:, 0] + 0.3 * X_synthetic[:, 1]
+    
+    print(f"\nDonnées synthétiques: {n_samples} échantillons, {n_features} features")
+    
+    # Test des algorithmes de sélection
+    print(f"\nTest de sélection de 20 features avec GPU={'activé' if GPU_AVAILABLE else 'désactivé'}:\n")
+    
+    algorithms = ['Variance', 'Pearson', 'RandomForest', 'GradientBoosting',
+                  'AdaBoost', 'ExtraTrees', 'MutualInfo', 'FRegression']
+    
+    for algo in algorithms:
+        try:
+            import time
+            start = time.time()
+            X_selected, indices = FeatureSelector.select_features(
+                X_synthetic, y_synthetic, algo, n_features=20, use_gpu=GPU_AVAILABLE
+            )
+            elapsed = time.time() - start
+            print(f"✓ {algo:20s}: {X_selected.shape[1]} features ({elapsed*1000:.2f}ms)")
+        except Exception as e:
+            print(f"✗ {algo:20s}: Erreur - {str(e)}")
+    
+    print("\n" + "="*60)
+    print("GÉNÉRATION DE DONNÉES DE SURVIE SYNTHÉTIQUES")
+    print("="*60)
+    
+    # Créer des données multi-omics synthétiques
+    omics_data_synthetic = {
+        'miRNA': np.random.randn(n_samples, 50),
+        'GeneExpression': np.random.randn(n_samples, 60),
+        'Methylation': np.random.randn(n_samples, 70)
+    }
+    
+    survival_times = np.random.exponential(scale=10, size=n_samples) + \
+                    0.3 * omics_data_synthetic['miRNA'][:, 0] + \
+                    0.2 * omics_data_synthetic['GeneExpression'][:, 1]
+    survival_times = np.abs(survival_times)
+    survival_events = np.random.binomial(1, 0.7, size=n_samples)
+    
+    print(f"\nDonnées multi-omics générées:")
+    for omics_type, data in omics_data_synthetic.items():
+        print(f"  - {omics_type}: {data.shape}")
+    print(f"\nDonnées de survie:")
+    print(f"  - Temps: min={survival_times.min():.2f}, max={survival_times.max():.2f}")
+    print(f"  - Événements: {survival_events.sum()}/{len(survival_events)} ({100*survival_events.mean():.1f}%)")
+    
+    print("\n" + "="*60)
+    print("TEST 1: FITNESS SIMULÉE avec parallélisation CPU")
+    print("="*60)
+    
+    import time
+    start_time = time.time()
+    
+    gp_simulated = GeneticProgramming(
+        population_size=20,
+        max_generations=10,
+        parent_selection_rate=0.16,
+        mutation_rate=0.3,
+        elitism_count=3,
+        random_injection_count=3,
         fitness_threshold=0.95,
-        max_depth_range=(1, 4),      # Profondeur entre 1 et 4 selon le papier
-        max_children_range=(1, 4),   # Nombre d'enfants entre 1 et 4
-        feature_range=(5, 100)       # Plage de sélection de features
+        max_depth_range=(1, 3),
+        max_children_range=(1, 3),
+        feature_range=(5, 30),
+        use_real_fitness=False,
+        use_gpu=GPU_AVAILABLE,
+        n_jobs=-1  # Utiliser tous les CPU disponibles
     )
     
-    best_solution, best_fitness = gp.run()
+    best_simulated, fitness_simulated = gp_simulated.run()
+    elapsed_simulated = time.time() - start_time
     
     print(f"\n{'='*60}")
-    print("ANALYSE DE LA MEILLEURE SOLUTION")
+    print("RÉSULTATS TEST 1")
     print(f"{'='*60}")
-    print(f"Fitness (C-index simulé): {best_fitness:.4f}")
-    print(f"Profondeur de l'arbre: {best_solution.get_tree_depth()}")
-    print(f"Nombre total de noeuds: {len(best_solution.get_all_nodes())}")
-    print(f"\nRacine de l'arbre:")
-    print(f"  - Max depth: {best_solution.max_depth}")
-    print(f"  - Nombre d'enfants: {best_solution.num_children}")
-    print(f"  - Algorithme: {best_solution.feature_selection_algo}")
-    print(f"  - Nombre de features: {best_solution.num_features}")
+    print(f"Fitness: {fitness_simulated:.4f}")
+    print(f"Temps d'exécution: {elapsed_simulated:.2f}s")
+    print(f"Profondeur: {best_simulated.get_tree_depth()}")
+    print(f"Algorithme racine: {best_simulated.feature_selection_algo}")
     
-    # Analyser les types d'omics utilisés
-    leaf_nodes = [n for n in best_solution.get_all_nodes() if n.is_leaf()]
-    omics_used = set(n.omics_type for n in leaf_nodes)
-    print(f"\nTypes d'omics intégrés: {', '.join(sorted(omics_used))}")
-    print(f"Nombre de feuilles: {len(leaf_nodes)}")
+    # Test avec fitness réelle si disponible
+    if SKSURV_AVAILABLE:
+        print("\n" + "="*60)
+        print("TEST 2: FITNESS RÉELLE avec parallélisation")
+        print("="*60)
+        
+        start_time = time.time()
+        
+        gp_real = GeneticProgramming(
+            population_size=10,
+            max_generations=5,
+            parent_selection_rate=0.20,
+            mutation_rate=0.3,
+            elitism_count=2,
+            random_injection_count=2,
+            fitness_threshold=0.95,
+            max_depth_range=(1, 2),
+            max_children_range=(1, 2),
+            feature_range=(5, 20),
+            use_real_fitness=True,
+            omics_data=omics_data_synthetic,
+            survival_data=(survival_times, survival_events),
+            n_folds=3,
+            use_gpu=GPU_AVAILABLE,
+            n_jobs=-1
+        )
+        
+        best_real, fitness_real = gp_real.run()
+        elapsed_real = time.time() - start_time
+        
+        print(f"\n{'='*60}")
+        print("RÉSULTATS TEST 2")
+        print(f"{'='*60}")
+        print(f"C-index: {fitness_real:.4f}")
+        print(f"Temps d'exécution: {elapsed_real:.2f}s")
+        print(f"Profondeur: {best_real.get_tree_depth()}")
+        print(f"Algorithme racine: {best_real.feature_selection_algo}")
+        
+        # Comparaison des performances
+        print(f"\n{'='*60}")
+        print("COMPARAISON DES PERFORMANCES")
+        print(f"{'='*60}")
+        print(f"Mode simulé:  {elapsed_simulated:.2f}s pour 20 indiv. × 10 gen.")
+        print(f"Mode réel:    {elapsed_real:.2f}s pour 10 indiv. × 5 gen.")
+        print(f"Ratio:        ~{elapsed_real/elapsed_simulated:.1f}x plus lent")
+    else:
+        print("\n" + "="*60)
+        print("SCIKIT-SURVIVAL NON DISPONIBLE")
+        print("="*60)
+        print("Pour tester la fitness réelle, installez:")
+        print("  pip install scikit-survival")
     
     print(f"\n{'='*60}")
-    print("NOTE: Cette implémentation utilise une fitness SIMULÉE.")
-    print("Pour une utilisation réelle, remplacez _evaluate_fitness()")
-    print("par un calcul de C-index avec vos données multi-omics.")
+    print("INFORMATIONS SUR LA PARALLÉLISATION")
+    print(f"{'='*60}")
+    print(f"""
+Configuration actuelle:
+  - GPU (CuPy): {'✓ Disponible' if GPU_AVAILABLE else '✗ Non disponible'}
+  - CPU cores: {mp.cpu_count()}
+  - Workers utilisés: {gp_simulated.n_jobs}
+
+Pour activer le GPU:
+  1. Installez CUDA Toolkit (11.x ou 12.x)
+  2. Installez CuPy: pip install cupy-cuda11x (ou cupy-cuda12x)
+  
+Avantages de la parallélisation:
+  - GPU: Accélère les opérations matricielles (variance, corrélation)
+  - CPU multiprocessing: Évalue plusieurs individus en parallèle
+  - Combinaison: GPU pour les calculs + CPU pour paralléliser les individus
+
+Speedup attendu:
+  - CPU (4 cores): ~3-4x plus rapide
+  - CPU (8 cores): ~6-8x plus rapide
+  - GPU: ~2-10x plus rapide (selon la taille des données)
+  - GPU + CPU: Cumulatif
+
+Note: La parallélisation est plus efficace avec:
+  - Grandes populations (>20 individus)
+  - Fitness réelle (calculs plus lourds)
+  - Grandes matrices de features (>1000 features)
+""")
+    
+    print(f"{'='*60}")
+    print("GUIDE D'UTILISATION")
+    print(f"{'='*60}")
+    print("""
+Pour utiliser avec vos données:
+
+# Avec GPU et parallélisation complète
+gp = GeneticProgramming(
+    population_size=50,
+    max_generations=100,
+    use_real_fitness=True,
+    omics_data=your_omics_data,
+    survival_data=(times, events),
+    n_folds=5,
+    use_gpu=True,      # Active le GPU
+    n_jobs=-1          # Utilise tous les CPU
+)
+
+# Mode hybride (GPU pour calculs + CPU pour parallélisation)
+best_solution, c_index = gp.run()
+""")
     print(f"{'='*60}")
