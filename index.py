@@ -689,6 +689,7 @@ class GeneticProgramming:
             
             with executor_class(max_workers=self.n_jobs) as executor:
                 fitness_func = partial(self._evaluate_fitness_wrapper, 
+                                      dataframes=self.dataframes,
                                       use_real_fitness=self.use_real_fitness,
                                       use_gpu=self.use_gpu,
                                       use_tpu=self.use_tpu,
@@ -716,6 +717,7 @@ class GeneticProgramming:
     
     @staticmethod
     def _evaluate_fitness_wrapper(individual: TreeNode, 
+                                  dataframes,
                                   use_real_fitness: bool,
                                   use_gpu: bool,
                                   use_tpu: bool,
@@ -725,6 +727,7 @@ class GeneticProgramming:
         Wrapper statique pour l'évaluation de fitness (nécessaire pour la parallélisation)
         """
         temp_gp = GeneticProgramming(
+            dataframes=dataframes,
             use_real_fitness=use_real_fitness,
             use_gpu=use_gpu,
             use_tpu=use_tpu,
