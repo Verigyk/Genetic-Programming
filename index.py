@@ -720,7 +720,7 @@ class GeneticProgramming:
         # Élitisme: garder les meilleurs (elitism_count chromosomes)
         sorted_indices = sorted(range(len(self.fitness_scores)), 
                               key=lambda i: self.fitness_scores[i], reverse=True)
-        parents = [copy.deepcopy(self.population[i]) for i in sorted_indices]
+        parents = [copy.deepcopy(self.population[i]) for i in sorted_indices[:num_parents]]
         
         print(f"Sélection de {len(parents)} parents")
         return parents
