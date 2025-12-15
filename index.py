@@ -45,6 +45,12 @@ try:
     import jax
     import jax.numpy as jnp
     from jax import jit, vmap
+    import multiprocessing
+
+    # Set start method to 'spawn' instead of 'fork'
+    if multiprocessing.get_start_method(allow_none=True) is None:
+        multiprocessing.set_start_method('spawn', force=True)
+
     
     # Vérifier si TPU est disponible
     TPU_AVAILABLE = len(jax.devices('tpu')) > 0
@@ -318,7 +324,6 @@ class GeneticProgramming:
                  max_generations: int = 100,
                  parent_selection_rate: float = 0.16,
                  mutation_rate: float = 0.3,
-                 elitism_count: int = 8,
                  random_injection_count: int = 8,
                  fitness_threshold: float = 0.95,
                  max_depth_range: Tuple[int, int] = (1, 4),
@@ -338,7 +343,6 @@ class GeneticProgramming:
         self.max_generations = max_generations
         self.parent_selection_rate = parent_selection_rate
         self.mutation_rate = mutation_rate
-        self.elitism_count = elitism_count
         self.random_injection_count = random_injection_count
         self.fitness_threshold = fitness_threshold
         self.max_depth_range = max_depth_range
@@ -715,27 +719,9 @@ class GeneticProgramming:
         # Élitisme: garder les meilleurs (elitism_count chromosomes)
         sorted_indices = sorted(range(len(self.fitness_scores)), 
                               key=lambda i: self.fitness_scores[i], reverse=True)
-        parents = [copy.deepcopy(self.population[i]) for i in sorted_indices[:self.elitism_count]]
+        parents = [copy.deepcopy(self.population[i]) for i in sorted_indices]
         
-        # Roulette wheel pour le reste
-        remaining = num_parents - self.elitism_count
-        if remaining > 0:
-            total_fitness = sum(self.fitness_scores)
-            
-            # Éviter division par zéro
-            if total_fitness == 0:
-                total_fitness = 1e-10
-            
-            for _ in range(remaining):
-                pick = random.uniform(0, total_fitness)
-                current = 0
-                for i, fitness in enumerate(self.fitness_scores):
-                    current += fitness
-                    if current > pick:
-                        parents.append(copy.deepcopy(self.population[i]))
-                        break
-        
-        print(f"Sélection de {len(parents)} parents ({self.elitism_count} élites, {remaining} roulette wheel)")
+        print(f"Sélection de {num_parents} parents")
         return parents
     
     def crossover(self, parents: List[TreeNode]) -> List[TreeNode]:
@@ -1037,7 +1023,6 @@ if __name__ == "__main__":
             max_generations=100,
             parent_selection_rate=0.16,
             mutation_rate=0.3,
-            elitism_count=3,
             random_injection_count=3,
             fitness_threshold=0.95,
             max_depth_range=(1, 3),
