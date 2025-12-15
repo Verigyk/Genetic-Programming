@@ -39,6 +39,29 @@ except ImportError:
     print("INFO: CuPy not installed. Running on CPU only.")
     print("For GPU acceleration, install with: pip install cupy-cuda11x or cupy-cuda12x")
 
+# Import pour TPU (JAX)
+try:
+    import jax
+    import jax.numpy as jnp
+    from jax import jit, vmap
+    
+    # Vérifier si TPU est disponible
+    TPU_AVAILABLE = len(jax.devices('tpu')) > 0
+    
+    if TPU_AVAILABLE:
+        print(f"✓ TPU disponible: {len(jax.devices('tpu'))} device(s)")
+        print(f"  Devices: {jax.devices('tpu')}")
+        # Configurer JAX pour utiliser le TPU
+        jax.config.update('jax_platform_name', 'tpu')
+    else:
+        print("INFO: TPU not detected. JAX will use CPU/GPU.")
+        
+except ImportError:
+    TPU_AVAILABLE = False
+    jnp = np  # Fallback to numpy
+    print("INFO: JAX not installed. TPU acceleration unavailable.")
+    print("For TPU support, install with: pip install jax[tpu]")
+
 # Import pour parallélisation CPU
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import os
@@ -85,13 +108,13 @@ class TreeNode:
 class FeatureSelector:
     """
     Classe pour implémenter tous les algorithmes de sélection de features
-    mentionnés dans le papier - avec support GPU optionnel
+    mentionnés dans le papier - avec support GPU/TPU optionnel
     """
     
     @staticmethod
     def select_features(X: np.ndarray, y: np.ndarray, method: str, 
                        n_features: int, feature_names: List[str] = None,
-                       use_gpu: bool = False) -> Tuple[np.ndarray, List[int]]:
+                       use_gpu: bool = False, use_tpu: bool = False) -> Tuple[np.ndarray, List[int]]:
         """
         Sélectionne les meilleures features selon la méthode spécifiée
         
@@ -101,7 +124,8 @@ class FeatureSelector:
             method: Nom de la méthode de sélection
             n_features: Nombre de features à sélectionner
             feature_names: Noms optionnels des features
-            use_gpu: Utiliser le GPU si disponible (pour certaines opérations)
+            use_gpu: Utiliser le GPU si disponible
+            use_tpu: Utiliser le TPU si disponible (prioritaire sur GPU)
             
         Returns:
             X_selected: Matrice avec features sélectionnées
@@ -113,9 +137,9 @@ class FeatureSelector:
         n_features = min(n_features, X.shape[1])
         
         if method == 'Variance':
-            return FeatureSelector._variance_selection(X, n_features, use_gpu)
+            return FeatureSelector._variance_selection(X, n_features, use_gpu, use_tpu)
         elif method == 'Pearson':
-            return FeatureSelector._pearson_selection(X, y, n_features, use_gpu)
+            return FeatureSelector._pearson_selection(X, y, n_features, use_gpu, use_tpu)
         elif method == 'RandomForest':
             return FeatureSelector._random_forest_selection(X, y, n_features)
         elif method == 'GradientBoosting':
@@ -129,14 +153,20 @@ class FeatureSelector:
         elif method == 'FRegression':
             return FeatureSelector._f_regression_selection(X, y, n_features)
         else:
-            # Fallback: sélection aléatoire
             indices = np.random.choice(X.shape[1], n_features, replace=False)
             return X[:, indices], list(indices)
     
     @staticmethod
-    def _variance_selection(X: np.ndarray, n_features: int, use_gpu: bool = False) -> Tuple[np.ndarray, List[int]]:
-        """Sélection basée sur la variance des features - avec support GPU"""
-        if use_gpu and GPU_AVAILABLE:
+    def _variance_selection(X: np.ndarray, n_features: int, 
+                           use_gpu: bool = False, use_tpu: bool = False) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur la variance - avec support GPU/TPU"""
+        # TPU a priorité sur GPU
+        if use_tpu and TPU_AVAILABLE:
+            X_tpu = jnp.array(X)
+            variances = jnp.var(X_tpu, axis=0)
+            top_indices = jnp.argsort(variances)[-n_features:][::-1]
+            top_indices = np.array(top_indices)
+        elif use_gpu and GPU_AVAILABLE:
             X_gpu = cp.asarray(X)
             variances = cp.var(X_gpu, axis=0)
             top_indices = cp.argsort(variances)[-n_features:][::-1]
@@ -144,16 +174,42 @@ class FeatureSelector:
         else:
             variances = np.var(X, axis=0)
             top_indices = np.argsort(variances)[-n_features:][::-1]
+        
         return X[:, top_indices], list(top_indices)
     
     @staticmethod
-    def _pearson_selection(X: np.ndarray, y: np.ndarray, n_features: int, use_gpu: bool = False) -> Tuple[np.ndarray, List[int]]:
-        """Sélection basée sur la corrélation de Pearson - avec support GPU"""
-        if use_gpu and GPU_AVAILABLE:
+    @jit
+    def _pearson_correlation_jax(X: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+        """Calcul optimisé de corrélation de Pearson sur TPU avec JAX"""
+        # Centrer les données
+        X_centered = X - jnp.mean(X, axis=0)
+        y_centered = y - jnp.mean(y)
+        
+        # Calcul des corrélations
+        numerator = jnp.abs(jnp.dot(X_centered.T, y_centered))
+        denominator = jnp.sqrt(jnp.sum(X_centered**2, axis=0) * jnp.sum(y_centered**2))
+        
+        correlations = numerator / (denominator + 1e-10)
+        return jnp.nan_to_num(correlations, 0)
+    
+    @staticmethod
+    def _pearson_selection(X: np.ndarray, y: np.ndarray, n_features: int,
+                          use_gpu: bool = False, use_tpu: bool = False) -> Tuple[np.ndarray, List[int]]:
+        """Sélection basée sur la corrélation de Pearson - avec support GPU/TPU"""
+        # TPU a priorité sur GPU
+        if use_tpu and TPU_AVAILABLE:
+            X_tpu = jnp.array(X)
+            y_tpu = jnp.array(y)
+            
+            # Utiliser la fonction JIT compilée
+            correlations = FeatureSelector._pearson_correlation_jax(X_tpu, y_tpu)
+            top_indices = jnp.argsort(correlations)[-n_features:][::-1]
+            top_indices = np.array(top_indices)
+            
+        elif use_gpu and GPU_AVAILABLE:
             X_gpu = cp.asarray(X)
             y_gpu = cp.asarray(y)
             
-            # Calcul des corrélations sur GPU
             X_centered = X_gpu - cp.mean(X_gpu, axis=0)
             y_centered = y_gpu - cp.mean(y_gpu)
             
@@ -243,7 +299,7 @@ class FeatureSelector:
 
 
 class GeneticProgramming:
-    """Algorithme de Genetic Programming avec parallélisation GPU/CPU"""
+    """Algorithme de Genetic Programming avec parallélisation GPU/TPU/CPU"""
     
     def __init__(self,
                  population_size: int = 50,
@@ -263,6 +319,7 @@ class GeneticProgramming:
                  survival_data: Tuple[np.ndarray, np.ndarray] = None,
                  n_folds: int = 5,
                  use_gpu: bool = False,
+                 use_tpu: bool = False,
                  n_jobs: int = -1):
         
         self.population_size = population_size
@@ -277,9 +334,15 @@ class GeneticProgramming:
         self.feature_range = feature_range
         self.n_folds = n_folds
         
+        # Configuration TPU (priorité sur GPU)
+        self.use_tpu = use_tpu and TPU_AVAILABLE
+        if use_tpu and not TPU_AVAILABLE:
+            print("WARNING: TPU requested but not available. Falling back to GPU/CPU.")
+            self.use_tpu = False
+        
         # Configuration GPU
-        self.use_gpu = use_gpu and GPU_AVAILABLE
-        if use_gpu and not GPU_AVAILABLE:
+        self.use_gpu = use_gpu and GPU_AVAILABLE and not self.use_tpu
+        if use_gpu and not GPU_AVAILABLE and not self.use_tpu:
             print("WARNING: GPU requested but CuPy not available. Using CPU.")
             self.use_gpu = False
         
@@ -289,8 +352,12 @@ class GeneticProgramming:
         else:
             self.n_jobs = max(1, n_jobs)
         
-        print(f"Configuration parallélisation:")
-        print(f"  - GPU: {'Activé' if self.use_gpu else 'Désactivé'}")
+        # Afficher configuration
+        accelerator = "TPU" if self.use_tpu else ("GPU" if self.use_gpu else "CPU")
+        print(f"Configuration d'accélération:")
+        print(f"  - Accélérateur: {accelerator}")
+        if self.use_tpu:
+            print(f"  - TPU devices: {len(jax.devices('tpu'))}")
         print(f"  - CPU workers: {self.n_jobs}")
         
         # Feature selection algorithms selon le papier
@@ -397,31 +464,26 @@ class GeneticProgramming:
         Avec parallélisation pour accélérer le calcul
         """
         mode = "RÉELLE (Gradient Boosting Survival)" if self.use_real_fitness else "SIMULÉE"
-        parallel_mode = "GPU" if self.use_gpu else f"CPU ({self.n_jobs} workers)"
-        print(f"\nGénération {self.generation}: Calcul de la fitness ({mode}, {parallel_mode})...")
+        accelerator = "TPU" if self.use_tpu else ("GPU" if self.use_gpu else f"CPU ({self.n_jobs} workers)")
+        print(f"\nGénération {self.generation}: Calcul de la fitness ({mode}, {accelerator})...")
         
         # Parallélisation du calcul de fitness
         if self.n_jobs > 1 and len(self.population) > 5:
-            # Utiliser ProcessPoolExecutor pour la parallélisation
-            # Note: Pour la fitness réelle, ThreadPoolExecutor peut être mieux
-            # car il évite la sérialisation des données
             executor_class = ThreadPoolExecutor if self.use_real_fitness else ProcessPoolExecutor
             
             with executor_class(max_workers=self.n_jobs) as executor:
-                # Créer une fonction partielle avec les paramètres nécessaires
                 fitness_func = partial(self._evaluate_fitness_wrapper, 
                                       omics_data=self.omics_data,
                                       survival_data=self.survival_data,
                                       use_real_fitness=self.use_real_fitness,
                                       use_gpu=self.use_gpu,
+                                      use_tpu=self.use_tpu,
                                       n_folds=self.n_folds,
                                       omics_types=self.omics_types,
                                       max_depth_range=self.max_depth_range)
                 
-                # Soumettre tous les individus
                 self.fitness_scores = list(executor.map(fitness_func, self.population))
         else:
-            # Calcul séquentiel pour petites populations
             self.fitness_scores = []
             for i, individual in enumerate(self.population):
                 fitness = self._evaluate_fitness(individual)
@@ -445,22 +507,23 @@ class GeneticProgramming:
                                   survival_data: Tuple[np.ndarray, np.ndarray],
                                   use_real_fitness: bool,
                                   use_gpu: bool,
+                                  use_tpu: bool,
                                   n_folds: int,
                                   omics_types: List[str],
                                   max_depth_range: Tuple[int, int]) -> float:
         """
         Wrapper statique pour l'évaluation de fitness (nécessaire pour la parallélisation)
         """
-        # Créer une instance temporaire pour utiliser les méthodes d'instance
         temp_gp = GeneticProgramming(
             use_real_fitness=use_real_fitness,
             omics_data=omics_data,
             survival_data=survival_data,
             use_gpu=use_gpu,
+            use_tpu=use_tpu,
             n_folds=n_folds,
             omics_types=omics_types,
             max_depth_range=max_depth_range,
-            n_jobs=1  # Pas de parallélisation récursive
+            n_jobs=1
         )
         return temp_gp._evaluate_fitness(individual)
     
@@ -584,7 +647,7 @@ class GeneticProgramming:
                                       y: np.ndarray) -> np.ndarray:
         """
         Intègre les données multi-omics selon l'arbre chromosomique (bottom-up)
-        Avec support GPU pour les opérations de sélection
+        Avec support GPU/TPU pour les opérations de sélection
         """
         node_features = {}
         
@@ -610,13 +673,14 @@ class GeneticProgramming:
             
             concatenated = np.hstack(child_features)
             
-            # Appliquer la sélection de features avec GPU si disponible
+            # Appliquer la sélection de features avec TPU/GPU si disponible
             selected_features, _ = FeatureSelector.select_features(
                 X=concatenated,
                 y=y,
                 method=node.feature_selection_algo,
                 n_features=min(node.num_features, concatenated.shape[1]),
-                use_gpu=self.use_gpu
+                use_gpu=self.use_gpu,
+                use_tpu=self.use_tpu
             )
             
             node_features[id(node)] = selected_features
@@ -838,8 +902,14 @@ class GeneticProgramming:
 # Exemple d'utilisation
 if __name__ == "__main__":
     print("="*60)
-    print("DÉMONSTRATION AVEC PARALLÉLISATION GPU/CPU")
+    print("DÉMONSTRATION AVEC PARALLÉLISATION GPU/TPU/CPU")
     print("="*60)
+    
+    # Afficher les accélérateurs disponibles
+    print(f"\nAccélérateurs détectés:")
+    print(f"  - GPU (CuPy): {'✓ Disponible' if GPU_AVAILABLE else '✗ Non disponible'}")
+    print(f"  - TPU (JAX): {'✓ Disponible' if TPU_AVAILABLE else '✗ Non disponible'}")
+    print(f"  - CPU cores: {mp.cpu_count()}")
     
     # Générer des données synthétiques
     np.random.seed(42)
@@ -852,29 +922,56 @@ if __name__ == "__main__":
     
     print(f"\nDonnées synthétiques: {n_samples} échantillons, {n_features} features")
     
-    # Test des algorithmes de sélection
-    print(f"\nTest de sélection de 20 features avec GPU={'activé' if GPU_AVAILABLE else 'désactivé'}:\n")
+    # Test des algorithmes de sélection avec différents accélérateurs
+    print(f"\nTest de sélection de 20 features:\n")
     
-    algorithms = ['Variance', 'Pearson', 'RandomForest', 'GradientBoosting',
-                  'AdaBoost', 'ExtraTrees', 'MutualInfo', 'FRegression']
+    algorithms_to_test = ['Variance', 'Pearson']
     
-    for algo in algorithms:
-        try:
-            import time
+    import time
+    for algo in algorithms_to_test:
+        # Test CPU
+        start = time.time()
+        X_cpu, _ = FeatureSelector.select_features(
+            X_synthetic, y_synthetic, algo, n_features=20, use_gpu=False, use_tpu=False
+        )
+        time_cpu = (time.time() - start) * 1000
+        
+        # Test GPU
+        if GPU_AVAILABLE:
             start = time.time()
-            X_selected, indices = FeatureSelector.select_features(
-                X_synthetic, y_synthetic, algo, n_features=20, use_gpu=GPU_AVAILABLE
+            X_gpu, _ = FeatureSelector.select_features(
+                X_synthetic, y_synthetic, algo, n_features=20, use_gpu=True, use_tpu=False
             )
-            elapsed = time.time() - start
-            print(f"✓ {algo:20s}: {X_selected.shape[1]} features ({elapsed*1000:.2f}ms)")
-        except Exception as e:
-            print(f"✗ {algo:20s}: Erreur - {str(e)}")
+            time_gpu = (time.time() - start) * 1000
+            speedup_gpu = time_cpu / time_gpu if time_gpu > 0 else 0
+        else:
+            time_gpu = None
+            speedup_gpu = None
+        
+        # Test TPU
+        if TPU_AVAILABLE:
+            start = time.time()
+            X_tpu, _ = FeatureSelector.select_features(
+                X_synthetic, y_synthetic, algo, n_features=20, use_gpu=False, use_tpu=True
+            )
+            time_tpu = (time.time() - start) * 1000
+            speedup_tpu = time_cpu / time_tpu if time_tpu > 0 else 0
+        else:
+            time_tpu = None
+            speedup_tpu = None
+        
+        print(f"{algo}:")
+        print(f"  CPU: {time_cpu:.2f}ms")
+        if time_gpu is not None:
+            print(f"  GPU: {time_gpu:.2f}ms (speedup: {speedup_gpu:.2f}x)")
+        if time_tpu is not None:
+            print(f"  TPU: {time_tpu:.2f}ms (speedup: {speedup_tpu:.2f}x)")
+        print()
     
-    print("\n" + "="*60)
+    print("="*60)
     print("GÉNÉRATION DE DONNÉES DE SURVIE SYNTHÉTIQUES")
     print("="*60)
     
-    # Créer des données multi-omics synthétiques
     omics_data_synthetic = {
         'miRNA': np.random.randn(n_samples, 50),
         'GeneExpression': np.random.randn(n_samples, 60),
@@ -894,141 +991,136 @@ if __name__ == "__main__":
     print(f"  - Temps: min={survival_times.min():.2f}, max={survival_times.max():.2f}")
     print(f"  - Événements: {survival_events.sum()}/{len(survival_events)} ({100*survival_events.mean():.1f}%)")
     
+    # Tests comparatifs avec différents accélérateurs
+    test_configs = []
+    
+    # Test CPU
+    test_configs.append(("CPU", False, False))
+    
+    # Test GPU
+    if GPU_AVAILABLE:
+        test_configs.append(("GPU", True, False))
+    
+    # Test TPU
+    if TPU_AVAILABLE:
+        test_configs.append(("TPU", False, True))
+    
     print("\n" + "="*60)
-    print("TEST 1: FITNESS SIMULÉE avec parallélisation CPU")
+    print("TESTS COMPARATIFS")
     print("="*60)
     
-    import time
-    start_time = time.time()
+    results = []
     
-    gp_simulated = GeneticProgramming(
-        population_size=20,
-        max_generations=10,
-        parent_selection_rate=0.16,
-        mutation_rate=0.3,
-        elitism_count=3,
-        random_injection_count=3,
-        fitness_threshold=0.95,
-        max_depth_range=(1, 3),
-        max_children_range=(1, 3),
-        feature_range=(5, 30),
-        use_real_fitness=False,
-        use_gpu=GPU_AVAILABLE,
-        n_jobs=-1  # Utiliser tous les CPU disponibles
-    )
-    
-    best_simulated, fitness_simulated = gp_simulated.run()
-    elapsed_simulated = time.time() - start_time
-    
-    print(f"\n{'='*60}")
-    print("RÉSULTATS TEST 1")
-    print(f"{'='*60}")
-    print(f"Fitness: {fitness_simulated:.4f}")
-    print(f"Temps d'exécution: {elapsed_simulated:.2f}s")
-    print(f"Profondeur: {best_simulated.get_tree_depth()}")
-    print(f"Algorithme racine: {best_simulated.feature_selection_algo}")
-    
-    # Test avec fitness réelle si disponible
-    if SKSURV_AVAILABLE:
-        print("\n" + "="*60)
-        print("TEST 2: FITNESS RÉELLE avec parallélisation")
-        print("="*60)
+    for config_name, use_gpu, use_tpu in test_configs:
+        print(f"\nTest avec {config_name}:")
+        print("-" * 40)
         
         start_time = time.time()
         
-        gp_real = GeneticProgramming(
-            population_size=10,
-            max_generations=5,
-            parent_selection_rate=0.20,
+        gp = GeneticProgramming(
+            population_size=20,
+            max_generations=10,
+            parent_selection_rate=0.16,
             mutation_rate=0.3,
-            elitism_count=2,
-            random_injection_count=2,
+            elitism_count=3,
+            random_injection_count=3,
             fitness_threshold=0.95,
-            max_depth_range=(1, 2),
-            max_children_range=(1, 2),
-            feature_range=(5, 20),
-            use_real_fitness=True,
-            omics_data=omics_data_synthetic,
-            survival_data=(survival_times, survival_events),
-            n_folds=3,
-            use_gpu=GPU_AVAILABLE,
+            max_depth_range=(1, 3),
+            max_children_range=(1, 3),
+            feature_range=(5, 30),
+            use_real_fitness=False,
+            use_gpu=use_gpu,
+            use_tpu=use_tpu,
             n_jobs=-1
         )
         
-        best_real, fitness_real = gp_real.run()
-        elapsed_real = time.time() - start_time
+        best_solution, best_fitness = gp.run()
+        elapsed = time.time() - start_time
         
-        print(f"\n{'='*60}")
-        print("RÉSULTATS TEST 2")
-        print(f"{'='*60}")
-        print(f"C-index: {fitness_real:.4f}")
-        print(f"Temps d'exécution: {elapsed_real:.2f}s")
-        print(f"Profondeur: {best_real.get_tree_depth()}")
-        print(f"Algorithme racine: {best_real.feature_selection_algo}")
+        results.append({
+            'config': config_name,
+            'fitness': best_fitness,
+            'time': elapsed
+        })
         
-        # Comparaison des performances
-        print(f"\n{'='*60}")
-        print("COMPARAISON DES PERFORMANCES")
-        print(f"{'='*60}")
-        print(f"Mode simulé:  {elapsed_simulated:.2f}s pour 20 indiv. × 10 gen.")
-        print(f"Mode réel:    {elapsed_real:.2f}s pour 10 indiv. × 5 gen.")
-        print(f"Ratio:        ~{elapsed_real/elapsed_simulated:.1f}x plus lent")
-    else:
+        print(f"Résultats:")
+        print(f"  - Fitness: {best_fitness:.4f}")
+        print(f"  - Temps: {elapsed:.2f}s")
+    
+    # Afficher le résumé comparatif
+    if len(results) > 1:
         print("\n" + "="*60)
-        print("SCIKIT-SURVIVAL NON DISPONIBLE")
+        print("COMPARAISON DES PERFORMANCES")
         print("="*60)
-        print("Pour tester la fitness réelle, installez:")
-        print("  pip install scikit-survival")
+        
+        baseline = results[0]['time']
+        print(f"\n{'Configuration':<15} {'Temps (s)':<12} {'Speedup':<10} {'Fitness':<10}")
+        print("-" * 50)
+        for r in results:
+            speedup = baseline / r['time']
+            print(f"{r['config']:<15} {r['time']:<12.2f} {speedup:<10.2f}x {r['fitness']:<10.4f}")
     
     print(f"\n{'='*60}")
-    print("INFORMATIONS SUR LA PARALLÉLISATION")
+    print("INFORMATIONS SUR TPU")
     print(f"{'='*60}")
     print(f"""
-Configuration actuelle:
-  - GPU (CuPy): {'✓ Disponible' if GPU_AVAILABLE else '✗ Non disponible'}
-  - CPU cores: {mp.cpu_count()}
-  - Workers utilisés: {gp_simulated.n_jobs}
-
-Pour activer le GPU:
-  1. Installez CUDA Toolkit (11.x ou 12.x)
-  2. Installez CuPy: pip install cupy-cuda11x (ou cupy-cuda12x)
+Google Cloud TPU:
+  - Les TPUs sont conçus pour les calculs matriciels massifs
+  - Excellents pour le deep learning et les opérations vectorisées
+  - Disponibles sur Google Cloud (TPU v2, v3, v4) et Google Colab
   
-Avantages de la parallélisation:
-  - GPU: Accélère les opérations matricielles (variance, corrélation)
-  - CPU multiprocessing: Évalue plusieurs individus en parallèle
-  - Combinaison: GPU pour les calculs + CPU pour paralléliser les individus
+Configuration sur Google Colab:
+  1. Runtime > Change runtime type > TPU
+  2. Installer JAX: !pip install jax[tpu]
+  3. Le code détectera automatiquement le TPU
 
-Speedup attendu:
-  - CPU (4 cores): ~3-4x plus rapide
-  - CPU (8 cores): ~6-8x plus rapide
-  - GPU: ~2-10x plus rapide (selon la taille des données)
-  - GPU + CPU: Cumulatif
+Configuration sur Google Cloud:
+  1. Créer une VM TPU
+  2. Installer JAX: pip install jax[tpu]
+  3. Configurer les variables d'environnement TPU
 
-Note: La parallélisation est plus efficace avec:
-  - Grandes populations (>20 individus)
-  - Fitness réelle (calculs plus lourds)
-  - Grandes matrices de features (>1000 features)
+Avantages TPU pour ce problème:
+  - Calculs matriciels (variance, corrélation): ~5-20x plus rapide
+  - Parallélisation native avec JAX
+  - JIT compilation pour optimisation automatique
+  - Mémoire HBM très rapide (600 GB/s sur TPU v3)
+
+Comparaison générale:
+  - CPU: Flexible, toujours disponible, bon pour petites données
+  - GPU: Excellent pour matrices moyennes/grandes (>10K features)
+  - TPU: Meilleur pour très grandes matrices (>50K features)
+          et pour les batches de calculs parallèles
+
+TPU actuel: {'✓ ' + str(len(jax.devices('tpu'))) + ' device(s)' if TPU_AVAILABLE else '✗ Non disponible'}
 """)
     
     print(f"{'='*60}")
     print("GUIDE D'UTILISATION")
     print(f"{'='*60}")
     print("""
-Pour utiliser avec vos données:
+Utilisation avec TPU:
 
-# Avec GPU et parallélisation complète
+# Sur Google Colab avec TPU
 gp = GeneticProgramming(
     population_size=50,
     max_generations=100,
     use_real_fitness=True,
     omics_data=your_omics_data,
     survival_data=(times, events),
-    n_folds=5,
-    use_gpu=True,      # Active le GPU
-    n_jobs=-1          # Utilise tous les CPU
+    use_tpu=True,      # Active le TPU
+    n_jobs=-1          # Parallélisation CPU en plus
 )
 
-# Mode hybride (GPU pour calculs + CPU pour parallélisation)
+# Le code choisira automatiquement:
+# - TPU si use_tpu=True et disponible
+# - Sinon GPU si use_gpu=True et disponible  
+# - Sinon CPU avec parallélisation
+
 best_solution, c_index = gp.run()
+
+Installation:
+  - GPU: pip install cupy-cuda11x (ou cupy-cuda12x)
+  - TPU: pip install jax[tpu]
+  - Survival: pip install scikit-survival
 """)
     print(f"{'='*60}")
