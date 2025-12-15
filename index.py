@@ -353,14 +353,6 @@ class GeneticProgramming:
         else:
             self.n_jobs = max(1, n_jobs)
         
-        # Afficher configuration
-        accelerator = "TPU" if self.use_tpu else ("GPU" if self.use_gpu else "CPU")
-        print(f"Configuration d'accélération:")
-        print(f"  - Accélérateur: {accelerator}")
-        if self.use_tpu:
-            print(f"  - TPU devices: {len(jax.devices('tpu'))}")
-        print(f"  - CPU workers: {self.n_jobs}")
-        
         # Feature selection algorithms selon le papier
         if feature_algos is None:
             self.feature_algos = [
@@ -1017,6 +1009,14 @@ if __name__ == "__main__":
         print("-" * 40)
         
         start_time = time.time()
+
+        # Afficher configuration
+        accelerator = "TPU" if use_tpu else ("GPU" if use_gpu else "CPU")
+        print(f"Configuration d'accélération:")
+        print(f"  - Accélérateur: {accelerator}")
+        if use_tpu:
+            print(f"  - TPU devices: {len(jax.devices('tpu'))}")
+        print(f"  - CPU workers: {-1}")
         
         gp = GeneticProgramming(
             population_size=20,
