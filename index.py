@@ -34,7 +34,7 @@ except ImportError:
 try:
     import cupy as cp
     GPU_AVAILABLE = True
-    print(f"✓ GPU disponible: {cp.cuda.Device().name}")
+    print(f"✓ GPU disponible: {cp.cuda.Device()}")
 except ImportError:
     GPU_AVAILABLE = False
     cp = np  # Fallback to numpy
@@ -58,7 +58,7 @@ try:
     else:
         print("INFO: TPU not detected. JAX will use CPU/GPU.")
         
-except ImportError:
+except Exception:
     TPU_AVAILABLE = False
     jnp = np  # Fallback to numpy
     print("INFO: JAX not installed. TPU acceleration unavailable.")
