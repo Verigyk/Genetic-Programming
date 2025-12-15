@@ -1161,8 +1161,8 @@ if __name__ == "__main__":
             
             print(f"\n✓ Données chargées avec succès!")
             print(f"\nTypes d'omics disponibles:")
-            for i in range(len(loader.files)):
-                print(f"  - {loader.files[i]:40s} {loader.data_frames[i].shape}")
+
+            print(loader.data_frames)
             
             # Créer et exécuter le Genetic Programming
             print(f"\n{'='*60}")
