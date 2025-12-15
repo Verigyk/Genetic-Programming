@@ -1005,6 +1005,9 @@ if __name__ == "__main__":
     results = []
     
     for config_name, use_gpu, use_tpu in test_configs:
+        if not use_gpu:
+            continue
+
         print(f"\nTest avec {config_name}:")
         print("-" * 40)
         
@@ -1019,8 +1022,8 @@ if __name__ == "__main__":
         print(f"  - CPU workers: {-1}")
         
         gp = GeneticProgramming(
-            population_size=20,
-            max_generations=10,
+            population_size=200,
+            max_generations=100,
             parent_selection_rate=0.16,
             mutation_rate=0.3,
             elitism_count=3,
