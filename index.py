@@ -34,7 +34,7 @@ except ImportError:
 try:
     import cupy as cp
     GPU_AVAILABLE = True
-    print(f"✓ GPU disponible: {cp.cuda.Device().name}")
+    print(f"✓ GPU disponible: {cp.cuda.Device()}")
 except ImportError:
     GPU_AVAILABLE = False
     cp = np  # Fallback to numpy
