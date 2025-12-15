@@ -34,7 +34,7 @@ except ImportError:
 try:
     import cupy as cp
     GPU_AVAILABLE = True
-    print(f"✓ GPU disponible: {cp.cuda.Device()}")
+    print(f"✓ GPU disponible: {cp.cuda.Device().name}")
 except ImportError:
     GPU_AVAILABLE = False
     cp = np  # Fallback to numpy
@@ -58,7 +58,7 @@ try:
     else:
         print("INFO: TPU not detected. JAX will use CPU/GPU.")
         
-except Exception:
+except ImportError:
     TPU_AVAILABLE = False
     jnp = np  # Fallback to numpy
     print("INFO: JAX not installed. TPU acceleration unavailable.")
@@ -143,15 +143,17 @@ class CSVDataLoader:
         return self.data_frames
     
     def extract_survival_data(self, everything_df: pd.DataFrame = None,
-                            time_column: str = 'OS_MONTHS',
-                            event_column: str = 'OS_STATUS') -> Tuple[np.ndarray, np.ndarray]:
+                            time_column: str = None,
+                            event_column: str = None,
+                            generate_synthetic: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extrait les données de survie depuis everything.csv
         
         Args:
             everything_df: DataFrame everything.csv (ou None pour utiliser le chargé)
-            time_column: Nom de la colonne temps de survie
-            event_column: Nom de la colonne événement (0/1 ou LIVING/DECEASED)
+            time_column: Nom de la colonne temps de survie (None = auto-détection)
+            event_column: Nom de la colonne événement (None = auto-détection)
+            generate_synthetic: Générer des données synthétiques si colonnes absentes
         
         Returns:
             (survival_times, survival_events)
@@ -160,27 +162,67 @@ class CSVDataLoader:
             everything_df = self.data_frames.get('everything.csv')
         
         if everything_df is None:
-            raise ValueError("everything.csv n'est pas chargé")
-        
-        # Extraire les temps
-        if time_column in everything_df.columns:
-            self.survival_times = everything_df[time_column].values
-        else:
-            raise ValueError(f"Colonne '{time_column}' introuvable dans everything.csv")
-        
-        # Extraire les événements
-        if event_column in everything_df.columns:
-            events = everything_df[event_column]
-            # Convertir si format texte (LIVING/DECEASED)
-            if events.dtype == 'object':
-                self.survival_events = (events == 'DECEASED').astype(int).values
+            if generate_synthetic:
+                print("⚠ everything.csv non disponible, génération de données synthétiques")
+                n_samples = 200
+                self.survival_times = np.random.exponential(scale=10, size=n_samples)
+                self.survival_events = np.random.binomial(1, 0.7, size=n_samples)
+                self.sample_ids = np.array([f"Sample_{i}" for i in range(n_samples)])
+                return self.survival_times, self.survival_events
             else:
-                self.survival_events = events.astype(int).values
-        else:
-            raise ValueError(f"Colonne '{event_column}' introuvable dans everything.csv")
+                raise ValueError("everything.csv n'est pas chargé")
         
         # Stocker les IDs des échantillons
         self.sample_ids = everything_df.index.values
+        n_samples = len(self.sample_ids)
+        
+        # Auto-détection des colonnes de temps
+        time_candidates = ['OS_MONTHS', 'OS.MONTHS', 'TIME', 'SURVIVAL_TIME', 'TIME_TO_EVENT']
+        if time_column is None:
+            for candidate in time_candidates:
+                if candidate in everything_df.columns:
+                    time_column = candidate
+                    break
+        
+        # Auto-détection des colonnes d'événement
+        event_candidates = ['OS_STATUS', 'OS.STATUS', 'STATUS', 'EVENT', 'VITAL_STATUS']
+        if event_column is None:
+            for candidate in event_candidates:
+                if candidate in everything_df.columns:
+                    event_column = candidate
+                    break
+        
+        # Extraire les temps
+        if time_column and time_column in everything_df.columns:
+            self.survival_times = everything_df[time_column].values
+            print(f"✓ Colonne temps trouvée: {time_column}")
+        else:
+            if generate_synthetic:
+                print(f"⚠ Colonne temps non trouvée, génération synthétique")
+                self.survival_times = np.random.exponential(scale=10, size=n_samples)
+            else:
+                available_cols = ', '.join(everything_df.columns[:10].tolist())
+                raise ValueError(f"Colonne temps introuvable. Colonnes disponibles: {available_cols}...")
+        
+        # Extraire les événements
+        if event_column and event_column in everything_df.columns:
+            events = everything_df[event_column]
+            # Convertir si format texte (LIVING/DECEASED, ALIVE/DEAD, etc.)
+            if events.dtype == 'object':
+                # Essayer différentes variantes
+                deceased_values = ['DECEASED', 'DEAD', '1', 'TRUE', 'YES', 'EVENT']
+                events_lower = events.astype(str).str.upper()
+                self.survival_events = events_lower.isin(deceased_values).astype(int).values
+            else:
+                self.survival_events = events.astype(int).values
+            print(f"✓ Colonne événement trouvée: {event_column}")
+        else:
+            if generate_synthetic:
+                print(f"⚠ Colonne événement non trouvée, génération synthétique")
+                self.survival_events = np.random.binomial(1, 0.7, size=n_samples)
+            else:
+                available_cols = ', '.join(everything_df.columns[:10].tolist())
+                raise ValueError(f"Colonne événement introuvable. Colonnes disponibles: {available_cols}...")
         
         print(f"\n✓ Données de survie extraites:")
         print(f"  - {len(self.survival_times)} échantillons")
@@ -255,17 +297,19 @@ class CSVDataLoader:
     
     @staticmethod
     def load_from_directory(directory: str, 
-                           time_column: str = 'OS_MONTHS',
-                           event_column: str = 'OS_STATUS',
-                           files_to_load: List[str] = None) -> 'CSVDataLoader':
+                           time_column: str = None,
+                           event_column: str = None,
+                           files_to_load: List[str] = None,
+                           generate_synthetic_survival: bool = True) -> 'CSVDataLoader':
         """
         Méthode pratique pour charger tous les fichiers depuis un répertoire
         
         Args:
             directory: Chemin du répertoire contenant les CSV
-            time_column: Colonne temps de survie
-            event_column: Colonne événement
+            time_column: Colonne temps de survie (None = auto-détection)
+            event_column: Colonne événement (None = auto-détection)
             files_to_load: Liste des fichiers à charger (None = tous)
+            generate_synthetic_survival: Générer données synthétiques si absentes
         
         Returns:
             Instance de CSVDataLoader avec données chargées
@@ -285,12 +329,33 @@ class CSVDataLoader:
         # Charger les fichiers
         loader.load_csv_files(file_paths)
         
-        # Extraire les données de survie si everything.csv est présent
-        if 'everything.csv' in loader.data_frames:
-            loader.extract_survival_data(time_column=time_column, event_column=event_column)
+        # Extraire les données de survie
+        try:
+            loader.extract_survival_data(
+                time_column=time_column, 
+                event_column=event_column,
+                generate_synthetic=generate_synthetic_survival
+            )
+        except Exception as e:
+            print(f"⚠ Erreur lors de l'extraction des données de survie: {str(e)}")
+            if generate_synthetic_survival:
+                print("  Génération de données de survie synthétiques...")
+                # Obtenir le nombre d'échantillons depuis les fichiers omics chargés
+                n_samples = 200
+                for df in loader.data_frames.values():
+                    if df.index.name != 'Hugo_Symbol':
+                        n_samples = len(df)
+                        break
+                    else:
+                        n_samples = len(df.columns)
+                        break
+                
+                loader.survival_times = np.random.exponential(scale=10, size=n_samples)
+                loader.survival_events = np.random.binomial(1, 0.7, size=n_samples)
+                loader.sample_ids = np.array([f"Sample_{i}" for i in range(n_samples)])
         
         # Préparer les données omics
-        loader.prepare_omics_data(align_samples=True)
+        loader.prepare_omics_data(align_samples=(loader.sample_ids is not None))
         
         return loader
 
@@ -1141,21 +1206,25 @@ if __name__ == "__main__":
     print("-"*60)
     
     # Spécifier le répertoire contenant vos fichiers CSV
-    data_directory = "./"  # MODIFIEZ CE CHEMIN
+    data_directory = "./data"  # MODIFIEZ CE CHEMIN
     
     # Vérifier si le répertoire existe
     if os.path.exists(data_directory):
         try:
             # Charger automatiquement tous les fichiers
+            # Les colonnes de survie seront auto-détectées ou générées
             loader = CSVDataLoader.load_from_directory(
                 directory=data_directory,
-                files_to_load=[               # Fichiers à charger (optionnel)
+                time_column=None,             # Auto-détection
+                event_column=None,            # Auto-détection
+                files_to_load=[               # Fichiers à charger
                     'everything.csv',
                     'oncotype21.csv',
                     'pam50.csv',
                     'union_pam50_oncotype.csv',
                     'intersection_pam50_oncotype.csv'
-                ]
+                ],
+                generate_synthetic_survival=True  # Générer si absent
             )
             
             # Récupérer les données prêtes pour GP
@@ -1214,165 +1283,133 @@ if __name__ == "__main__":
         
         except Exception as e:
             print(f"\n✗ Erreur lors du chargement: {str(e)}")
-            print(f"\nAssurez-vous que:")
+            print(f"\nVérifications:")
             print(f"  1. Le répertoire '{data_directory}' contient vos fichiers CSV")
-            print(f"  2. Les fichiers ont les bons noms et colonnes")
-            print(f"  3. everything.csv contient les colonnes 'OS_MONTHS' et 'OS_STATUS'")
+            print(f"  2. Les fichiers ont les bons noms")
+            print(f"  3. Les colonnes sont correctes (Hugo_Symbol ou Sample ID)")
+            import traceback
+            traceback.print_exc()
     else:
         print(f"\n⚠ Répertoire '{data_directory}' introuvable")
-        print(f"\nPassage à l'OPTION 2 avec données synthétiques...")
+        print(f"\nPassage à l'OPTION 2...")
     
     # =========================================================================
-    # OPTION 2: Chargement manuel (plus de contrôle)
+    # OPTION 2: Chargement uniquement des fichiers omics (sans everything.csv)
     # =========================================================================
     print(f"\n{'='*60}")
-    print("OPTION 2: Chargement manuel avec chemins spécifiques")
+    print("OPTION 2: Chargement uniquement fichiers omics")
     print("="*60)
     
-    # Créer le loader
-    loader_manual = CSVDataLoader()
+    loader_omics_only = CSVDataLoader()
     
-    # Définir les chemins individuels
-    file_paths_manual = {
-        'everything.csv': './data/everything.csv',
+    # Charger uniquement les fichiers d'expression génique
+    file_paths_omics = {
         'oncotype21.csv': './data/oncotype21.csv',
         'pam50.csv': './data/pam50.csv',
         'union_pam50_oncotype.csv': './data/union_pam50_oncotype.csv',
         'intersection_pam50_oncotype.csv': './data/intersection_pam50_oncotype.csv'
     }
     
-    # Charger les fichiers
-    loader_manual.load_csv_files(file_paths_manual, verbose=True)
+    loader_omics_only.load_csv_files(file_paths_omics, verbose=True)
     
-    # Si des fichiers ont été chargés
-    if loader_manual.data_frames:
-        # Extraire les données de survie
-        if 'everything.csv' in loader_manual.data_frames:
-            loader_manual.extract_survival_data(
-                time_column='OS_MONTHS',
-                event_column='OS_STATUS'
-            )
+    if loader_omics_only.data_frames:
+        print(f"\n✓ Fichiers omics chargés!")
+        
+        # Générer des données de survie synthétiques
+        # (basées sur le nombre d'échantillons détecté)
+        first_df = next(iter(loader_omics_only.data_frames.values()))
+        if first_df.index.name == 'Hugo_Symbol':
+            n_samples = len(first_df.columns)
+            loader_omics_only.sample_ids = first_df.columns.values
+        else:
+            n_samples = len(first_df)
+            loader_omics_only.sample_ids = first_df.index.values
+        
+        print(f"\nGénération de données de survie synthétiques pour {n_samples} échantillons...")
+        loader_omics_only.survival_times = np.random.exponential(scale=10, size=n_samples)
+        loader_omics_only.survival_events = np.random.binomial(1, 0.7, size=n_samples)
         
         # Préparer les données omics
-        loader_manual.prepare_omics_data(align_samples=True)
+        loader_omics_only.prepare_omics_data(align_samples=False)
         
-        print(f"\n✓ Chargement manuel réussi!")
-    else:
-        print(f"\n⚠ Aucun fichier chargé, utilisation de données synthétiques")
+        print(f"\n✓ Prêt pour le Genetic Programming!")
     
     # =========================================================================
-    # OPTION 3: Données synthétiques (pour tests)
-    # =========================================================================
-    if not loader_manual.data_frames:
-        print(f"\n{'='*60}")
-        print("OPTION 3: Génération de données synthétiques pour test")
-        print("="*60)
-        
-        np.random.seed(42)
-        n_samples = 200
-        
-        omics_data_synthetic = {
-            'GeneExpression_Oncotype': np.random.randn(n_samples, 50),
-            'GeneExpression_PAM50': np.random.randn(n_samples, 60),
-            'GeneExpression_Union': np.random.randn(n_samples, 70)
-        }
-        
-        survival_times = np.random.exponential(scale=10, size=n_samples)
-        survival_times = np.abs(survival_times)
-        survival_events = np.random.binomial(1, 0.7, size=n_samples)
-        
-        print(f"\nDonnées synthétiques générées:")
-        for omics_type, data in omics_data_synthetic.items():
-            print(f"  - {omics_type:40s} {data.shape}")
-        print(f"\nDonnées de survie:")
-        print(f"  - Temps: min={survival_times.min():.2f}, max={survival_times.max():.2f}")
-        print(f"  - Événements: {survival_events.sum()}/{len(survival_events)}")
-        
-        # Exécuter GP avec données synthétiques
-        print(f"\n{'='*60}")
-        print("EXÉCUTION AVEC DONNÉES SYNTHÉTIQUES")
-        print(f"{'='*60}")
-        
-        gp_synthetic = GeneticProgramming(
-            population_size=10,
-            max_generations=5,
-            parent_selection_rate=0.20,
-            mutation_rate=0.3,
-            elitism_count=2,
-            random_injection_count=2,
-            fitness_threshold=0.95,
-            max_depth_range=(1, 2),
-            max_children_range=(1, 2),
-            feature_range=(5, 20),
-            use_real_fitness=False,  # Fitness simulée pour test rapide
-            omics_data=omics_data_synthetic,
-            survival_data=(survival_times, survival_events),
-            omics_types=list(omics_data_synthetic.keys()),
-            n_folds=3,
-            use_gpu=False,
-            use_tpu=False,
-            n_jobs=2
-        )
-        
-        best_synthetic, fitness_synthetic = gp_synthetic.run()
-        
-        print(f"\n{'='*60}")
-        print("RÉSULTATS SYNTHÉTIQUES")
-        print(f"{'='*60}")
-        print(f"Fitness: {fitness_synthetic:.4f}")
-        print(f"Profondeur: {best_synthetic.get_tree_depth()}")
-    
-    # =========================================================================
-    # GUIDE D'UTILISATION
+    # OPTION 3: Guide d'utilisation
     # =========================================================================
     print(f"\n{'='*60}")
-    print("GUIDE D'UTILISATION AVEC VOS DONNÉES")
+    print("GUIDE D'UTILISATION")
     print(f"{'='*60}")
     print("""
-Structure attendue des fichiers CSV:
-
-1. everything.csv (Sample ID comme index):
-   - Colonnes: Sample ID, OS_MONTHS, OS_STATUS, ...
-   - OS_STATUS peut être: 0/1 ou LIVING/DECEASED
-
-2. oncotype21.csv (Hugo_Symbol comme index):
-   - Index: Hugo_Symbol
-   - Colonnes: Échantillons (ex: TCGA-XX-XXXX)
-   - Valeurs: Expression des gènes
-
-3. pam50.csv, union_pam50_oncotype.csv, intersection_pam50_oncotype.csv:
-   - Même format que oncotype21.csv
-
-Utilisation rapide:
-
-# Charger depuis un répertoire
+CAS 1: Vous avez everything.csv avec colonnes de survie
+-------------------------------------------------------
 loader = CSVDataLoader.load_from_directory(
     directory='./data',
-    time_column='OS_MONTHS',
-    event_column='OS_STATUS'
+    time_column='OS_MONTHS',      # ou None pour auto-détection
+    event_column='OS_STATUS'      # ou None pour auto-détection
 )
 
-# Récupérer les données
-omics_data, (times, events) = loader.get_data_for_gp()
-
-# Créer et exécuter GP
-gp = GeneticProgramming(
-    population_size=50,
-    max_generations=100,
-    use_real_fitness=True,
-    omics_data=omics_data,
-    survival_data=(times, events),
-    omics_types=list(omics_data.keys()),
-    n_folds=5,
-    use_gpu=True,
-    n_jobs=-1
+CAS 2: Vous avez everything.csv SANS colonnes de survie
+--------------------------------------------------------
+loader = CSVDataLoader.load_from_directory(
+    directory='./data',
+    generate_synthetic_survival=True  # Génère automatiquement
 )
 
-best_solution, c_index = gp.run()
+CAS 3: Vous n'avez PAS everything.csv
+--------------------------------------
+loader = CSVDataLoader()
+file_paths = {
+    'oncotype21.csv': './data/oncotype21.csv',
+    'pam50.csv': './data/pam50.csv',
+    # ... autres fichiers
+}
+loader.load_csv_files(file_paths)
 
-Notes:
-  - Les fichiers seront automatiquement transposés si nécessaire
-  - Les échantillons seront alignés avec everything.csv
-  - Les valeurs manquantes seront remplacées par 0
+# Générer données de survie synthétiques
+n_samples = len(loader.data_frames['oncotype21.csv'].columns)
+loader.survival_times = np.random.exponential(10, n_samples)
+loader.survival_events = np.random.binomial(1, 0.7, n_samples)
+loader.sample_ids = loader.data_frames['oncotype21.csv'].columns.values
+
+# Préparer omics
+loader.prepare_omics_data(align_samples=False)
+
+CAS 4: Vous avez vos propres données de survie
+-----------------------------------------------
+# Charger les omics
+loader = CSVDataLoader()
+loader.load_csv_files(file_paths)
+
+# Définir vos propres données de survie
+loader.survival_times = your_times_array      # numpy array
+loader.survival_events = your_events_array    # numpy array (0/1)
+loader.sample_ids = your_sample_ids          # numpy array
+
+# Préparer
+loader.prepare_omics_data(align_samples=True)
+
+Colonnes auto-détectées pour survie:
+-------------------------------------
+Temps: OS_MONTHS, OS.MONTHS, TIME, SURVIVAL_TIME, TIME_TO_EVENT
+Événements: OS_STATUS, OS.STATUS, STATUS, EVENT, VITAL_STATUS
+
+Formats d'événements acceptés:
+- Numérique: 0/1
+- Texte: LIVING/DECEASED, ALIVE/DEAD, YES/NO
+
+Structure des fichiers CSV:
+----------------------------
+1. oncotype21.csv, pam50.csv, etc.:
+   Index: Hugo_Symbol (gènes)
+   Colonnes: Échantillons (ex: TCGA-XX-XXXX)
+   Valeurs: Expression
+
+2. everything.csv (optionnel):
+   Index: Sample ID (échantillons)
+   Colonnes: Variables cliniques
+   
+Note: Les fichiers seront automatiquement transposés si nécessaire
+      pour avoir (n_samples, n_features)
 """)
     print(f"{'='*60}")
