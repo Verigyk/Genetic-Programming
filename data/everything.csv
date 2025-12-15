@@ -1,4 +1,4 @@
-Sample ID,Diagnosis Age,Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code,Overall Survival (Months)
+Hugo_Symbol,Diagnosis Age,Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code,Overall Survival (Months)
 TCGA-3C-AAAU-01,55,NX,132.95
 TCGA-3C-AALI-01,50,N1a,131.57
 TCGA-3C-AALJ-01,62,N1a,48.42

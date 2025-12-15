@@ -124,7 +124,7 @@ class CSVDataLoader:
                 df = pd.read_csv(file_path)
                 
                 # Définir l'index selon le fichier
-                id_col = self.id_columns.get(file_name)
+                id_col = self.id_columns.get("Hugo_Symbol")
                 
                 if id_col and id_col in df.columns:
                     df = df.set_index(id_col)
