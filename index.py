@@ -890,9 +890,9 @@ class GeneticProgramming:
         return self.best_individual, self.best_fitness
 
 
-def load_csv_files(csv_files: Dict[str, str]) -> Tuple[Dict[str, np.ndarray], pd.DataFrame]:
+def load_csv_files(csv_files: Dict[str, str]) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """
-    Charge les fichiers CSV avec les identifiants appropriés.
+    Charge les fichiers CSV et crée une union des données génomiques.
     
     Args:
         csv_files: Dictionnaire avec {nom_dataset: chemin_fichier}
@@ -901,8 +901,9 @@ def load_csv_files(csv_files: Dict[str, str]) -> Tuple[Dict[str, np.ndarray], pd
     
     Returns:
         Tuple contenant:
-        - omics_data: Dictionnaire {nom_dataset: matrice numpy}
-        - everything_df: DataFrame complet avec les données de survie (Sample ID comme index)
+        - X: Matrice numpy avec les données génomiques combinées (union)
+        - y: Vecteur numpy avec "Overall Survival (Months)"
+        - everything_df: DataFrame complet avec les données cliniques
     """
     
     # Configuration des identifiants pour chaque fichier
@@ -914,51 +915,99 @@ def load_csv_files(csv_files: Dict[str, str]) -> Tuple[Dict[str, np.ndarray], pd
         'intersection_pam50_oncotype': 'Hugo_Symbol'
     }
     
-    omics_data = {}
-    everything_df = None
-    
     print("\n" + "="*60)
     print("CHARGEMENT DES FICHIERS CSV")
     print("="*60)
     
+    # Charger everything.csv pour les données de survie
+    everything_df = None
+    try:
+        df = pd.read_csv(csv_files['everything'])
+        if 'Sample ID' in df.columns:
+            everything_df = df.set_index('Sample ID')
+        else:
+            everything_df = df
+        print(f"\n✓ Chargé: everything.csv")
+        print(f"  - Shape: {everything_df.shape}")
+        print(f"  - Colonnes: {list(everything_df.columns[:10])}...")
+    except Exception as e:
+        print(f"\n✗ Erreur lors du chargement de everything.csv: {e}")
+        return None, None, None
+    
+    # Vérifier que "Overall Survival (Months)" existe
+    if 'Overall Survival (Months)' not in everything_df.columns:
+        print(f"\n✗ Colonne 'Overall Survival (Months)' non trouvée dans everything.csv")
+        print(f"   Colonnes disponibles: {list(everything_df.columns)}")
+        return None, None, None
+    
+    # Extraire la variable cible
+    y = everything_df['Overall Survival (Months)'].values
+    y = y[~np.isnan(y)]  # Enlever les valeurs manquantes
+    
+    # Charger et combiner les fichiers génomiques
+    genomic_dfs = []
+    
     for dataset_name, filepath in csv_files.items():
-        try:
-            # Charger le CSV
-            df = pd.read_csv(filepath)
+        if dataset_name == 'everything':
+            continue
             
-            # Obtenir la colonne ID appropriée
+        try:
+            df = pd.read_csv(filepath)
             id_col = id_columns.get(dataset_name)
             
             if id_col and id_col in df.columns:
-                # Définir l'index avec la colonne ID
                 df = df.set_index(id_col)
-                
+            
             print(f"\n✓ Chargé: {dataset_name}")
             print(f"  - Fichier: {filepath}")
             print(f"  - ID utilisé: {id_col}")
             print(f"  - Shape: {df.shape}")
-            print(f"  - Colonnes numériques: {df.select_dtypes(include=[np.number]).shape[1]}")
             
-            # Pour everything.csv, garder le DataFrame complet (données de survie)
-            if dataset_name == 'everything':
-                everything_df = df
-            else:
-                # Pour les autres fichiers, extraire les données numériques en matrice numpy
-                numeric_data = df.select_dtypes(include=[np.number])
-                omics_data[dataset_name] = numeric_data.values
-                
+            # Transposer pour avoir les échantillons en lignes et les gènes en colonnes
+            df_transposed = df.T
+            df_transposed.columns = [f"{dataset_name}_{col}" for col in df_transposed.columns]
+            genomic_dfs.append(df_transposed)
+            
         except FileNotFoundError:
             print(f"\n✗ Fichier non trouvé: {filepath}")
         except Exception as e:
             print(f"\n✗ Erreur lors du chargement de {filepath}: {e}")
     
-    print("\n" + "="*60)
-    print(f"Datasets chargés: {len(omics_data)}")
-    if everything_df is not None:
-        print(f"Données de survie: {everything_df.shape}")
-    print("="*60)
-    
-    return omics_data, everything_df
+    # Créer l'union des données génomiques
+    if len(genomic_dfs) > 0:
+        # Concaténer tous les DataFrames génomiques horizontalement (union des colonnes)
+        combined_df = pd.concat(genomic_dfs, axis=1, join='inner')  # inner join pour garder les échantillons communs
+        
+        print(f"\n" + "="*60)
+        print("UNION DES DONNÉES GÉNOMIQUES")
+        print("="*60)
+        print(f"  - Nombre d'échantillons (Sample IDs): {combined_df.shape[0]}")
+        print(f"  - Nombre total de features (gènes): {combined_df.shape[1]}")
+        
+        # Aligner les données génomiques avec les données de survie
+        common_samples = combined_df.index.intersection(everything_df.index)
+        print(f"  - Échantillons communs avec everything.csv: {len(common_samples)}")
+        
+        if len(common_samples) == 0:
+            print("\n✗ Aucun échantillon commun trouvé entre les fichiers génomiques et everything.csv")
+            return None, None, None
+        
+        # Filtrer pour garder seulement les échantillons communs
+        X = combined_df.loc[common_samples].values
+        y = everything_df.loc[common_samples, 'Overall Survival (Months)'].values
+        
+        # Enlever les lignes avec des valeurs manquantes
+        valid_indices = ~np.isnan(y)
+        X = X[valid_indices]
+        y = y[valid_indices]
+        
+        print(f"  - Shape finale après alignement: X={X.shape}, y={y.shape}")
+        print("="*60)
+        
+        return X, y, everything_df
+    else:
+        print("\n✗ Aucun fichier génomique chargé")
+        return None, None, None
 
 
 # Exemple d'utilisation
@@ -982,11 +1031,11 @@ if __name__ == "__main__":
         'intersection_pam50_oncotype': 'intersection_pam50_oncotype.csv'
     }
     
-    omics_data_real, everything_df = load_csv_files(csv_files)
+    X_real, y_real, everything_df = load_csv_files(csv_files)
     
     # Si aucun fichier n'a été chargé, utiliser des données synthétiques
-    if len(omics_data_real) == 0:
-        print("\n⚠ Aucun fichier CSV trouvé, génération de données synthétiques...")
+    if X_real is None or y_real is None:
+        print("\n⚠ Impossible de charger les fichiers CSV, génération de données synthétiques...")
         np.random.seed(42)
         n_samples = 200
         n_features = 100
@@ -997,17 +1046,13 @@ if __name__ == "__main__":
         
         print(f"\nDonnées synthétiques: {n_samples} échantillons, {n_features} features")
     else:
-        # Utiliser les données réelles
-        # Pour les tests, on utilise les données du premier dataset
-        first_dataset = list(omics_data_real.keys())[0]
-        X_synthetic = omics_data_real[first_dataset]
+        # Utiliser les données réelles chargées
+        X_synthetic = X_real
+        y_synthetic = y_real
         n_samples, n_features = X_synthetic.shape
         
-        # Créer une variable cible synthétique pour les tests
-        y_synthetic = np.random.exponential(scale=10, size=n_samples) + \
-                      0.5 * X_synthetic[:, 0] + 0.3 * X_synthetic[:, 1]
-        
-        print(f"\nUtilisation des données réelles de '{first_dataset}': {n_samples} échantillons, {n_features} features")
+        print(f"\n✓ Utilisation des données réelles (union): {n_samples} échantillons, {n_features} features")
+        print(f"✓ Variable cible: Overall Survival (Months)")
     
     # Test des algorithmes de sélection avec différents accélérateurs
     print(f"\nTest de sélection de 20 features:\n")
@@ -1060,11 +1105,26 @@ if __name__ == "__main__":
     print("="*60)
     
     # Utiliser les données réelles si disponibles, sinon générer des données synthétiques
-    if len(omics_data_real) > 0:
-        omics_data_synthetic = omics_data_real
-        print(f"\nUtilisation des données multi-omics réelles:")
+    if X_real is not None and y_real is not None:
+        # Créer un dictionnaire multi-omics avec les données réelles
+        # On simule plusieurs types d'omics en divisant les features
+        n_features_total = X_real.shape[1]
+        n_features_per_type = n_features_total // 3
+        
+        omics_data_synthetic = {
+            'genomic_set1': X_real[:, :n_features_per_type],
+            'genomic_set2': X_real[:, n_features_per_type:2*n_features_per_type],
+            'genomic_set3': X_real[:, 2*n_features_per_type:]
+        }
+        print(f"\nUtilisation des données multi-omics réelles (divisées en 3 sets):")
         for omics_type, data in omics_data_synthetic.items():
             print(f"  - {omics_type}: {data.shape}")
+        
+        # Utiliser les données de survie réelles
+        survival_times = y_real
+        # Générer des événements de censure pour la compatibilité
+        survival_events = np.random.binomial(1, 0.7, size=len(y_real))
+        print(f"\nUtilisation des temps de survie réels (Overall Survival Months):")
     else:
         omics_data_synthetic = {
             'miRNA': np.random.randn(n_samples, 50),
@@ -1074,14 +1134,7 @@ if __name__ == "__main__":
         print(f"\nDonnées multi-omics synthétiques générées:")
         for omics_type, data in omics_data_synthetic.items():
             print(f"  - {omics_type}: {data.shape}")
-    
-    # Générer ou extraire les données de survie
-    if everything_df is not None and 'survival_time' in everything_df.columns and 'survival_event' in everything_df.columns:
-        # Utiliser les données de survie réelles
-        survival_times = everything_df['survival_time'].values
-        survival_events = everything_df['survival_event'].values
-        print(f"\nUtilisation des données de survie réelles:")
-    else:
+        
         # Générer des données de survie synthétiques
         first_data = list(omics_data_synthetic.values())[0]
         survival_times = np.random.exponential(scale=10, size=first_data.shape[0]) + \
