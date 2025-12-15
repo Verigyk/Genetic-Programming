@@ -104,6 +104,17 @@ class TreeNode:
             if result:
                 return result
         return None
+    
+def print_tree(node: TreeNode, indent: int = 0):
+    prefix = "  " * indent
+    if node.is_leaf():
+        print(f"{prefix}└─ FEUILLE: {node.omics_type} (depth={node.depth})")
+    else:
+        print(f"{prefix}└─ NOEUD: algo={node.feature_selection_algo}, "
+            f"n_features={node.num_features}, depth={node.depth}, "
+            f"max_depth={node.max_depth}")
+        for child in node.children:
+            print_tree(child, indent + 1)
 
 
 class FeatureSelector:
@@ -1050,6 +1061,8 @@ if __name__ == "__main__":
         print(f"Résultats:")
         print(f"  - Fitness: {best_fitness:.4f}")
         print(f"  - Temps: {elapsed:.2f}s")
+
+        print_tree(best_solution)
     
     # Afficher le résumé comparatif
     if len(results) > 1:
