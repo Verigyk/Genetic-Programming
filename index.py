@@ -722,7 +722,7 @@ class GeneticProgramming:
                               key=lambda i: self.fitness_scores[i], reverse=True)
         parents = [copy.deepcopy(self.population[i]) for i in sorted_indices]
         
-        print(f"Sélection de {num_parents} parents")
+        print(f"Sélection de {len(parents)} parents")
         return parents
     
     def crossover(self, parents: List[TreeNode]) -> List[TreeNode]:
