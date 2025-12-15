@@ -17,6 +17,7 @@ from sklearn.model_selection import KFold
 from scipy.stats import pearsonr
 import multiprocessing as mp
 from functools import partial
+import os
 
 # Import pour Gradient Boosting Survival
 try:
@@ -33,8 +34,7 @@ except ImportError:
 try:
     import cupy as cp
     GPU_AVAILABLE = True
-    device_id = cp.cuda.get_device_id()
-    print(f"""✓ GPU disponible: {cp.cuda.Device(device_id)}""")
+    print(f"✓ GPU disponible: {cp.cuda.Device().name}")
 except ImportError:
     GPU_AVAILABLE = False
     cp = np  # Fallback to numpy
@@ -46,12 +46,6 @@ try:
     import jax
     import jax.numpy as jnp
     from jax import jit, vmap
-    import multiprocessing
-
-    # Set start method to 'spawn' instead of 'fork'
-    if multiprocessing.get_start_method(allow_none=True) is None:
-        multiprocessing.set_start_method('spawn', force=True)
-
     
     # Vérifier si TPU est disponible
     TPU_AVAILABLE = len(jax.devices('tpu')) > 0
@@ -64,7 +58,7 @@ try:
     else:
         print("INFO: TPU not detected. JAX will use CPU/GPU.")
         
-except Exception:
+except ImportError:
     TPU_AVAILABLE = False
     jnp = np  # Fallback to numpy
     print("INFO: JAX not installed. TPU acceleration unavailable.")
@@ -72,7 +66,234 @@ except Exception:
 
 # Import pour parallélisation CPU
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-import os
+
+class CSVDataLoader:
+    """
+    Classe pour charger et préparer les fichiers CSV multi-omics
+    pour l'algorithme de Genetic Programming
+    """
+    
+    def __init__(self):
+        # Configuration des colonnes ID pour chaque fichier
+        self.id_columns = {
+            'everything.csv': 'Sample ID',
+            'oncotype21.csv': 'Hugo_Symbol',
+            'union_pam50_oncotype.csv': 'Hugo_Symbol',
+            'pam50.csv': 'Hugo_Symbol',
+            'intersection_pam50_oncotype.csv': 'Hugo_Symbol'
+        }
+        
+        # Mapper les fichiers aux types d'omics
+        self.file_to_omics_mapping = {
+            'oncotype21.csv': 'GeneExpression_Oncotype',
+            'pam50.csv': 'GeneExpression_PAM50',
+            'union_pam50_oncotype.csv': 'GeneExpression_Union',
+            'intersection_pam50_oncotype.csv': 'GeneExpression_Intersection',
+        }
+        
+        self.data_frames = {}
+        self.omics_data = {}
+        self.sample_ids = None
+        self.survival_times = None
+        self.survival_events = None
+    
+    def load_csv_files(self, file_paths: Dict[str, str], verbose: bool = True) -> Dict[str, pd.DataFrame]:
+        """
+        Charge tous les fichiers CSV avec leurs index appropriés
+        
+        Args:
+            file_paths: Dictionnaire {nom_fichier: chemin_complet}
+            verbose: Afficher les informations de chargement
+        
+        Returns:
+            Dictionnaire avec les DataFrames chargés
+        """
+        if verbose:
+            print("="*60)
+            print("CHARGEMENT DES FICHIERS CSV")
+            print("="*60)
+        
+        for file_name, file_path in file_paths.items():
+            try:
+                if not os.path.exists(file_path):
+                    if verbose:
+                        print(f"⚠ Fichier introuvable: {file_name}")
+                    continue
+                
+                # Charger le CSV
+                df = pd.read_csv(file_path)
+                
+                # Définir l'index selon le fichier
+                id_col = self.id_columns.get(file_name)
+                
+                if id_col and id_col in df.columns:
+                    df = df.set_index(id_col)
+                    if verbose:
+                        print(f"✓ {file_name:40s} {df.shape} (index: {id_col})")
+                else:
+                    if verbose:
+                        print(f"⚠ {file_name:40s} {df.shape} (index non défini)")
+                
+                self.data_frames[file_name] = df
+                
+            except Exception as e:
+                if verbose:
+                    print(f"✗ Erreur lors du chargement de {file_name}: {str(e)}")
+        
+        return self.data_frames
+    
+    def extract_survival_data(self, everything_df: pd.DataFrame = None,
+                            time_column: str = 'OS_MONTHS',
+                            event_column: str = 'OS_STATUS') -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Extrait les données de survie depuis everything.csv
+        
+        Args:
+            everything_df: DataFrame everything.csv (ou None pour utiliser le chargé)
+            time_column: Nom de la colonne temps de survie
+            event_column: Nom de la colonne événement (0/1 ou LIVING/DECEASED)
+        
+        Returns:
+            (survival_times, survival_events)
+        """
+        if everything_df is None:
+            everything_df = self.data_frames.get('everything.csv')
+        
+        if everything_df is None:
+            raise ValueError("everything.csv n'est pas chargé")
+        
+        # Extraire les temps
+        if time_column in everything_df.columns:
+            self.survival_times = everything_df[time_column].values
+        else:
+            raise ValueError(f"Colonne '{time_column}' introuvable dans everything.csv")
+        
+        # Extraire les événements
+        if event_column in everything_df.columns:
+            events = everything_df[event_column]
+            # Convertir si format texte (LIVING/DECEASED)
+            if events.dtype == 'object':
+                self.survival_events = (events == 'DECEASED').astype(int).values
+            else:
+                self.survival_events = events.astype(int).values
+        else:
+            raise ValueError(f"Colonne '{event_column}' introuvable dans everything.csv")
+        
+        # Stocker les IDs des échantillons
+        self.sample_ids = everything_df.index.values
+        
+        print(f"\n✓ Données de survie extraites:")
+        print(f"  - {len(self.survival_times)} échantillons")
+        print(f"  - Temps: min={self.survival_times.min():.2f}, max={self.survival_times.max():.2f}")
+        print(f"  - Événements: {self.survival_events.sum()}/{len(self.survival_events)} " +
+              f"({100*self.survival_events.mean():.1f}%)")
+        
+        return self.survival_times, self.survival_events
+    
+    def prepare_omics_data(self, align_samples: bool = True) -> Dict[str, np.ndarray]:
+        """
+        Prépare les données omics au format attendu par GeneticProgramming
+        
+        Args:
+            align_samples: Aligner les échantillons avec everything.csv
+        
+        Returns:
+            Dictionnaire {type_omics: array_features}
+            Format: (n_samples, n_features) - échantillons en lignes, features en colonnes
+        """
+        print(f"\n{'='*60}")
+        print("PRÉPARATION DES DONNÉES OMICS")
+        print(f"{'='*60}")
+        
+        for file_name, omics_type in self.file_to_omics_mapping.items():
+            if file_name not in self.data_frames:
+                print(f"⚠ {file_name} non chargé, ignoré")
+                continue
+            
+            df = self.data_frames[file_name].copy()
+            
+            # Si l'index est Hugo_Symbol, transposer pour avoir échantillons en lignes
+            if df.index.name == 'Hugo_Symbol':
+                df = df.T
+                print(f"  Transposition de {file_name} (Hugo_Symbol → Sample)")
+            
+            # Aligner avec les échantillons de everything.csv si demandé
+            if align_samples and self.sample_ids is not None:
+                common_samples = df.index.intersection(self.sample_ids)
+                
+                if len(common_samples) == 0:
+                    print(f"⚠ Aucun échantillon commun avec everything.csv pour {file_name}")
+                    continue
+                
+                # Réordonner selon l'ordre de everything.csv
+                df = df.loc[common_samples]
+                df = df.reindex(self.sample_ids, fill_value=0)
+                
+                print(f"✓ {omics_type:35s} {df.shape} ({len(common_samples)} échantillons alignés)")
+            else:
+                print(f"✓ {omics_type:35s} {df.shape}")
+            
+            # Convertir en array numpy
+            self.omics_data[omics_type] = df.values.astype(np.float32)
+        
+        return self.omics_data
+    
+    def get_data_for_gp(self) -> Tuple[Dict[str, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
+        """
+        Retourne les données prêtes pour GeneticProgramming
+        
+        Returns:
+            (omics_data, (survival_times, survival_events))
+        """
+        if not self.omics_data:
+            raise ValueError("Appelez d'abord prepare_omics_data()")
+        
+        if self.survival_times is None or self.survival_events is None:
+            raise ValueError("Appelez d'abord extract_survival_data()")
+        
+        return self.omics_data, (self.survival_times, self.survival_events)
+    
+    @staticmethod
+    def load_from_directory(directory: str, 
+                           time_column: str = 'OS_MONTHS',
+                           event_column: str = 'OS_STATUS',
+                           files_to_load: List[str] = None) -> 'CSVDataLoader':
+        """
+        Méthode pratique pour charger tous les fichiers depuis un répertoire
+        
+        Args:
+            directory: Chemin du répertoire contenant les CSV
+            time_column: Colonne temps de survie
+            event_column: Colonne événement
+            files_to_load: Liste des fichiers à charger (None = tous)
+        
+        Returns:
+            Instance de CSVDataLoader avec données chargées
+        """
+        loader = CSVDataLoader()
+        
+        # Définir les fichiers à charger
+        if files_to_load is None:
+            files_to_load = list(loader.id_columns.keys())
+        
+        # Créer les chemins complets
+        file_paths = {
+            file_name: os.path.join(directory, file_name)
+            for file_name in files_to_load
+        }
+        
+        # Charger les fichiers
+        loader.load_csv_files(file_paths)
+        
+        # Extraire les données de survie si everything.csv est présent
+        if 'everything.csv' in loader.data_frames:
+            loader.extract_survival_data(time_column=time_column, event_column=event_column)
+        
+        # Préparer les données omics
+        loader.prepare_omics_data(align_samples=True)
+        
+        return loader
+
 
 @dataclass
 class TreeNode:
@@ -111,17 +332,6 @@ class TreeNode:
             if result:
                 return result
         return None
-    
-def print_tree(node: TreeNode, indent: int = 0):
-    prefix = "  " * indent
-    if node.is_leaf():
-        print(f"{prefix}└─ FEUILLE: {node.omics_type} (depth={node.depth})")
-    else:
-        print(f"{prefix}└─ NOEUD: algo={node.feature_selection_algo}, "
-            f"n_features={node.num_features}, depth={node.depth}, "
-            f"max_depth={node.max_depth}")
-        for child in node.children:
-            print_tree(child, indent + 1)
 
 
 class FeatureSelector:
@@ -325,6 +535,7 @@ class GeneticProgramming:
                  max_generations: int = 100,
                  parent_selection_rate: float = 0.16,
                  mutation_rate: float = 0.3,
+                 elitism_count: int = 8,
                  random_injection_count: int = 8,
                  fitness_threshold: float = 0.95,
                  max_depth_range: Tuple[int, int] = (1, 4),
@@ -344,6 +555,7 @@ class GeneticProgramming:
         self.max_generations = max_generations
         self.parent_selection_rate = parent_selection_rate
         self.mutation_rate = mutation_rate
+        self.elitism_count = elitism_count
         self.random_injection_count = random_injection_count
         self.fitness_threshold = fitness_threshold
         self.max_depth_range = max_depth_range
@@ -368,6 +580,14 @@ class GeneticProgramming:
             self.n_jobs = max(1, mp.cpu_count() - 1)
         else:
             self.n_jobs = max(1, n_jobs)
+        
+        # Afficher configuration
+        accelerator = "TPU" if self.use_tpu else ("GPU" if self.use_gpu else "CPU")
+        print(f"Configuration d'accélération:")
+        print(f"  - Accélérateur: {accelerator}")
+        if self.use_tpu:
+            print(f"  - TPU devices: {len(jax.devices('tpu'))}")
+        print(f"  - CPU workers: {self.n_jobs}")
         
         # Feature selection algorithms selon le papier
         if feature_algos is None:
@@ -720,9 +940,27 @@ class GeneticProgramming:
         # Élitisme: garder les meilleurs (elitism_count chromosomes)
         sorted_indices = sorted(range(len(self.fitness_scores)), 
                               key=lambda i: self.fitness_scores[i], reverse=True)
-        parents = [copy.deepcopy(self.population[i]) for i in sorted_indices[:num_parents]]
+        parents = [copy.deepcopy(self.population[i]) for i in sorted_indices[:self.elitism_count]]
         
-        print(f"Sélection de {len(parents)} parents")
+        # Roulette wheel pour le reste
+        remaining = num_parents - self.elitism_count
+        if remaining > 0:
+            total_fitness = sum(self.fitness_scores)
+            
+            # Éviter division par zéro
+            if total_fitness == 0:
+                total_fitness = 1e-10
+            
+            for _ in range(remaining):
+                pick = random.uniform(0, total_fitness)
+                current = 0
+                for i, fitness in enumerate(self.fitness_scores):
+                    current += fitness
+                    if current > pick:
+                        parents.append(copy.deepcopy(self.population[i]))
+                        break
+        
+        print(f"Sélection de {len(parents)} parents ({self.elitism_count} élites, {remaining} roulette wheel)")
         return parents
     
     def crossover(self, parents: List[TreeNode]) -> List[TreeNode]:
@@ -890,405 +1128,253 @@ class GeneticProgramming:
         return self.best_individual, self.best_fitness
 
 
-def load_csv_files(csv_files: Dict[str, str]) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """
-    Charge les fichiers CSV et crée une union des données génomiques.
-    
-    Args:
-        csv_files: Dictionnaire avec {nom_dataset: chemin_fichier}
-                  Les noms possibles sont: 'everything', 'oncotype21', 'union_pam50_oncotype',
-                  'pam50', 'intersection_pam50_oncotype'
-    
-    Returns:
-        Tuple contenant:
-        - X: Matrice numpy avec les données génomiques combinées (union)
-        - y: Vecteur numpy avec "Overall Survival (Months)"
-        - everything_df: DataFrame complet avec les données cliniques
-    """
-    
-    # Configuration des identifiants pour chaque fichier
-    id_columns = {
-        'everything': 'Sample ID',
-        'oncotype21': 'Hugo_Symbol',
-        'union_pam50_oncotype': 'Hugo_Symbol',
-        'pam50': 'Hugo_Symbol',
-        'intersection_pam50_oncotype': 'Hugo_Symbol'
-    }
-    
-    print("\n" + "="*60)
-    print("CHARGEMENT DES FICHIERS CSV")
-    print("="*60)
-    
-    # Charger everything.csv pour les données de survie
-    everything_df = None
-    try:
-        df = pd.read_csv(csv_files['everything'])
-        if 'Sample ID' in df.columns:
-            everything_df = df.set_index('Sample ID')
-        else:
-            everything_df = df
-        print(f"\n✓ Chargé: everything.csv")
-        print(f"  - Shape: {everything_df.shape}")
-        print(f"  - Colonnes: {list(everything_df.columns[:10])}...")
-    except Exception as e:
-        print(f"\n✗ Erreur lors du chargement de everything.csv: {e}")
-        return None, None, None
-    
-    # Vérifier que "Overall Survival (Months)" existe
-    if 'Overall Survival (Months)' not in everything_df.columns:
-        print(f"\n✗ Colonne 'Overall Survival (Months)' non trouvée dans everything.csv")
-        print(f"   Colonnes disponibles: {list(everything_df.columns)}")
-        return None, None, None
-    
-    # Extraire la variable cible
-    y = everything_df['Overall Survival (Months)'].values
-    y = y[~np.isnan(y)]  # Enlever les valeurs manquantes
-    
-    # Charger et combiner les fichiers génomiques
-    genomic_dfs = []
-    
-    for dataset_name, filepath in csv_files.items():
-        if dataset_name == 'everything':
-            continue
-            
-        try:
-            df = pd.read_csv(filepath)
-            id_col = id_columns.get(dataset_name)
-            
-            if id_col and id_col in df.columns:
-                df = df.set_index(id_col)
-            
-            print(f"\n✓ Chargé: {dataset_name}")
-            print(f"  - Fichier: {filepath}")
-            print(f"  - ID utilisé: {id_col}")
-            print(f"  - Shape: {df.shape}")
-            
-            # Transposer pour avoir les échantillons en lignes et les gènes en colonnes
-            df_transposed = df.T
-            df_transposed.columns = [f"{dataset_name}_{col}" for col in df_transposed.columns]
-            genomic_dfs.append(df_transposed)
-            
-        except FileNotFoundError:
-            print(f"\n✗ Fichier non trouvé: {filepath}")
-        except Exception as e:
-            print(f"\n✗ Erreur lors du chargement de {filepath}: {e}")
-    
-    # Créer l'union des données génomiques
-    if len(genomic_dfs) > 0:
-        # Concaténer tous les DataFrames génomiques horizontalement (union des colonnes)
-        combined_df = pd.concat(genomic_dfs, axis=1, join='inner')  # inner join pour garder les échantillons communs
-        
-        print(f"\n" + "="*60)
-        print("UNION DES DONNÉES GÉNOMIQUES")
-        print("="*60)
-        print(f"  - Nombre d'échantillons (Sample IDs): {combined_df.shape[0]}")
-        print(f"  - Nombre total de features (gènes): {combined_df.shape[1]}")
-        
-        # Aligner les données génomiques avec les données de survie
-        common_samples = combined_df.index.intersection(everything_df.index)
-        print(f"  - Échantillons communs avec everything.csv: {len(common_samples)}")
-        
-        if len(common_samples) == 0:
-            print("\n✗ Aucun échantillon commun trouvé entre les fichiers génomiques et everything.csv")
-            return None, None, None
-        
-        # Filtrer pour garder seulement les échantillons communs
-        X = combined_df.loc[common_samples].values
-        y = everything_df.loc[common_samples, 'Overall Survival (Months)'].values
-        
-        # Enlever les lignes avec des valeurs manquantes
-        valid_indices = ~np.isnan(y)
-        X = X[valid_indices]
-        y = y[valid_indices]
-        
-        print(f"  - Shape finale après alignement: X={X.shape}, y={y.shape}")
-        print("="*60)
-        
-        return X, y, everything_df
-    else:
-        print("\n✗ Aucun fichier génomique chargé")
-        return None, None, None
-
-
 # Exemple d'utilisation
 if __name__ == "__main__":
     print("="*60)
-    print("DÉMONSTRATION AVEC PARALLÉLISATION GPU/TPU/CPU")
+    print("EXEMPLE D'UTILISATION AVEC FICHIERS CSV")
     print("="*60)
     
-    # Afficher les accélérateurs disponibles
-    print(f"\nAccélérateurs détectés:")
-    print(f"  - GPU (CuPy): {'✓ Disponible' if GPU_AVAILABLE else '✗ Non disponible'}")
-    print(f"  - TPU (JAX): {'✓ Disponible' if TPU_AVAILABLE else '✗ Non disponible'}")
-    print(f"  - CPU cores: {mp.cpu_count()}")
+    # =========================================================================
+    # OPTION 1: Chargement depuis un répertoire (méthode simple)
+    # =========================================================================
+    print("\nOPTION 1: Chargement automatique depuis répertoire")
+    print("-"*60)
     
-    # Charger les fichiers CSV
-    csv_files = {
-        'everything': 'everything.csv',
-        'oncotype21': 'oncotype21.csv',
-        'union_pam50_oncotype': 'union_pam50_oncotype.csv',
-        'pam50': 'pam50.csv',
-        'intersection_pam50_oncotype': 'intersection_pam50_oncotype.csv'
+    # Spécifier le répertoire contenant vos fichiers CSV
+    data_directory = "./data"  # MODIFIEZ CE CHEMIN
+    
+    # Vérifier si le répertoire existe
+    if os.path.exists(data_directory):
+        try:
+            # Charger automatiquement tous les fichiers
+            loader = CSVDataLoader.load_from_directory(
+                directory=data_directory,
+                time_column='OS_MONTHS',      # Nom de la colonne temps
+                event_column='OS_STATUS',     # Nom de la colonne événement
+                files_to_load=[               # Fichiers à charger (optionnel)
+                    'everything.csv',
+                    'oncotype21.csv',
+                    'pam50.csv',
+                    'union_pam50_oncotype.csv',
+                    'intersection_pam50_oncotype.csv'
+                ]
+            )
+            
+            # Récupérer les données prêtes pour GP
+            omics_data, (survival_times, survival_events) = loader.get_data_for_gp()
+            
+            print(f"\n✓ Données chargées avec succès!")
+            print(f"\nTypes d'omics disponibles:")
+            for omics_type, data in omics_data.items():
+                print(f"  - {omics_type:40s} {data.shape}")
+            
+            # Créer et exécuter le Genetic Programming
+            print(f"\n{'='*60}")
+            print("EXÉCUTION DU GENETIC PROGRAMMING")
+            print(f"{'='*60}")
+            
+            # Extraire les types d'omics disponibles
+            available_omics = list(omics_data.keys())
+            
+            gp = GeneticProgramming(
+                population_size=20,
+                max_generations=10,
+                parent_selection_rate=0.16,
+                mutation_rate=0.3,
+                elitism_count=3,
+                random_injection_count=3,
+                fitness_threshold=0.95,
+                max_depth_range=(1, 3),
+                max_children_range=(1, 3),
+                feature_range=(5, 30),
+                use_real_fitness=SKSURV_AVAILABLE,  # Active si disponible
+                omics_data=omics_data,
+                survival_data=(survival_times, survival_events),
+                omics_types=available_omics,  # Utiliser les omics chargés
+                n_folds=3,
+                use_gpu=False,
+                use_tpu=False,
+                n_jobs=-1
+            )
+            
+            best_solution, best_fitness = gp.run()
+            
+            print(f"\n{'='*60}")
+            print("RÉSULTATS")
+            print(f"{'='*60}")
+            print(f"{'C-index' if SKSURV_AVAILABLE else 'Fitness'}: {best_fitness:.4f}")
+            print(f"Profondeur de l'arbre: {best_solution.get_tree_depth()}")
+            print(f"Algorithme racine: {best_solution.feature_selection_algo}")
+            print(f"Features sélectionnées: {best_solution.num_features}")
+            
+            # Analyser les omics utilisés
+            leaf_nodes = [n for n in best_solution.get_all_nodes() if n.is_leaf()]
+            omics_used = set(n.omics_type for n in leaf_nodes)
+            print(f"\nOmics intégrés dans la meilleure solution:")
+            for omics in sorted(omics_used):
+                print(f"  - {omics}")
+        
+        except Exception as e:
+            print(f"\n✗ Erreur lors du chargement: {str(e)}")
+            print(f"\nAssurez-vous que:")
+            print(f"  1. Le répertoire '{data_directory}' contient vos fichiers CSV")
+            print(f"  2. Les fichiers ont les bons noms et colonnes")
+            print(f"  3. everything.csv contient les colonnes 'OS_MONTHS' et 'OS_STATUS'")
+    else:
+        print(f"\n⚠ Répertoire '{data_directory}' introuvable")
+        print(f"\nPassage à l'OPTION 2 avec données synthétiques...")
+    
+    # =========================================================================
+    # OPTION 2: Chargement manuel (plus de contrôle)
+    # =========================================================================
+    print(f"\n{'='*60}")
+    print("OPTION 2: Chargement manuel avec chemins spécifiques")
+    print("="*60)
+    
+    # Créer le loader
+    loader_manual = CSVDataLoader()
+    
+    # Définir les chemins individuels
+    file_paths_manual = {
+        'everything.csv': './data/everything.csv',
+        'oncotype21.csv': './data/oncotype21.csv',
+        'pam50.csv': './data/pam50.csv',
+        'union_pam50_oncotype.csv': './data/union_pam50_oncotype.csv',
+        'intersection_pam50_oncotype.csv': './data/intersection_pam50_oncotype.csv'
     }
     
-    X_real, y_real, everything_df = load_csv_files(csv_files)
+    # Charger les fichiers
+    loader_manual.load_csv_files(file_paths_manual, verbose=True)
     
-    # Si aucun fichier n'a été chargé, utiliser des données synthétiques
-    if X_real is None or y_real is None:
-        print("\n⚠ Impossible de charger les fichiers CSV, génération de données synthétiques...")
-        np.random.seed(42)
-        n_samples = 200
-        n_features = 100
-        
-        X_synthetic = np.random.randn(n_samples, n_features)
-        y_synthetic = np.random.exponential(scale=10, size=n_samples) + \
-                      0.5 * X_synthetic[:, 0] + 0.3 * X_synthetic[:, 1]
-        
-        print(f"\nDonnées synthétiques: {n_samples} échantillons, {n_features} features")
-    else:
-        # Utiliser les données réelles chargées
-        X_synthetic = X_real
-        y_synthetic = y_real
-        n_samples, n_features = X_synthetic.shape
-        
-        print(f"\n✓ Utilisation des données réelles (union): {n_samples} échantillons, {n_features} features")
-        print(f"✓ Variable cible: Overall Survival (Months)")
-    
-    # Test des algorithmes de sélection avec différents accélérateurs
-    print(f"\nTest de sélection de 20 features:\n")
-    
-    algorithms_to_test = ['Variance', 'Pearson']
-    
-    import time
-    for algo in algorithms_to_test:
-        # Test CPU
-        start = time.time()
-        X_cpu, _ = FeatureSelector.select_features(
-            X_synthetic, y_synthetic, algo, n_features=20, use_gpu=False, use_tpu=False
-        )
-        time_cpu = (time.time() - start) * 1000
-        
-        # Test GPU
-        if GPU_AVAILABLE:
-            start = time.time()
-            X_gpu, _ = FeatureSelector.select_features(
-                X_synthetic, y_synthetic, algo, n_features=20, use_gpu=True, use_tpu=False
+    # Si des fichiers ont été chargés
+    if loader_manual.data_frames:
+        # Extraire les données de survie
+        if 'everything.csv' in loader_manual.data_frames:
+            loader_manual.extract_survival_data(
+                time_column='OS_MONTHS',
+                event_column='OS_STATUS'
             )
-            time_gpu = (time.time() - start) * 1000
-            speedup_gpu = time_cpu / time_gpu if time_gpu > 0 else 0
-        else:
-            time_gpu = None
-            speedup_gpu = None
         
-        # Test TPU
-        if TPU_AVAILABLE:
-            start = time.time()
-            X_tpu, _ = FeatureSelector.select_features(
-                X_synthetic, y_synthetic, algo, n_features=20, use_gpu=False, use_tpu=True
-            )
-            time_tpu = (time.time() - start) * 1000
-            speedup_tpu = time_cpu / time_tpu if time_tpu > 0 else 0
-        else:
-            time_tpu = None
-            speedup_tpu = None
+        # Préparer les données omics
+        loader_manual.prepare_omics_data(align_samples=True)
         
-        print(f"{algo}:")
-        print(f"  CPU: {time_cpu:.2f}ms")
-        if time_gpu is not None:
-            print(f"  GPU: {time_gpu:.2f}ms (speedup: {speedup_gpu:.2f}x)")
-        if time_tpu is not None:
-            print(f"  TPU: {time_tpu:.2f}ms (speedup: {speedup_tpu:.2f}x)")
-        print()
-    
-    print("="*60)
-    print("PRÉPARATION DES DONNÉES MULTI-OMICS")
-    print("="*60)
-    
-    # Utiliser les données réelles si disponibles, sinon générer des données synthétiques
-    if X_real is not None and y_real is not None:
-        # Créer un dictionnaire multi-omics avec les données réelles
-        # On simule plusieurs types d'omics en divisant les features
-        n_features_total = X_real.shape[1]
-        n_features_per_type = n_features_total // 3
-        
-        omics_data_synthetic = {
-            'genomic_set1': X_real[:, :n_features_per_type],
-            'genomic_set2': X_real[:, n_features_per_type:2*n_features_per_type],
-            'genomic_set3': X_real[:, 2*n_features_per_type:]
-        }
-        print(f"\nUtilisation des données multi-omics réelles (divisées en 3 sets):")
-        for omics_type, data in omics_data_synthetic.items():
-            print(f"  - {omics_type}: {data.shape}")
-        
-        # Utiliser les données de survie réelles
-        survival_times = y_real
-        # Générer des événements de censure pour la compatibilité
-        survival_events = np.random.binomial(1, 0.7, size=len(y_real))
-        print(f"\nUtilisation des temps de survie réels (Overall Survival Months):")
+        print(f"\n✓ Chargement manuel réussi!")
     else:
-        omics_data_synthetic = {
-            'miRNA': np.random.randn(n_samples, 50),
-            'GeneExpression': np.random.randn(n_samples, 60),
-            'Methylation': np.random.randn(n_samples, 70)
-        }
-        print(f"\nDonnées multi-omics synthétiques générées:")
-        for omics_type, data in omics_data_synthetic.items():
-            print(f"  - {omics_type}: {data.shape}")
-        
-        # Générer des données de survie synthétiques
-        first_data = list(omics_data_synthetic.values())[0]
-        survival_times = np.random.exponential(scale=10, size=first_data.shape[0]) + \
-                        0.3 * first_data[:, 0] + \
-                        0.2 * first_data[:, min(1, first_data.shape[1]-1)]
-        survival_times = np.abs(survival_times)
-        survival_events = np.random.binomial(1, 0.7, size=first_data.shape[0])
-        print(f"\nGénération de données de survie synthétiques:")
+        print(f"\n⚠ Aucun fichier chargé, utilisation de données synthétiques")
     
-    print(f"  - Temps: min={survival_times.min():.2f}, max={survival_times.max():.2f}")
-    print(f"  - Événements: {survival_events.sum()}/{len(survival_events)} ({100*survival_events.mean():.1f}%)")
-    
-    # Tests comparatifs avec différents accélérateurs
-    test_configs = []
-    
-    # Test CPU
-    test_configs.append(("CPU", False, False))
-    
-    # Test GPU
-    if GPU_AVAILABLE:
-        test_configs.append(("GPU", True, False))
-    
-    # Test TPU
-    if TPU_AVAILABLE:
-        test_configs.append(("TPU", False, True))
-    
-    print("\n" + "="*60)
-    print("TESTS COMPARATIFS")
-    print("="*60)
-    
-    results = []
-    
-    for config_name, use_gpu, use_tpu in test_configs:
-        if not use_gpu and not use_tpu:
-            continue
-
-        print(f"\nTest avec {config_name}:")
-        print("-" * 40)
-        
-        start_time = time.time()
-
-        # Afficher configuration
-        accelerator = "TPU" if use_tpu else ("GPU" if use_gpu else "CPU")
-        print(f"Configuration d'accélération:")
-        print(f"  - Accélérateur: {accelerator}")
-        if use_tpu:
-            print(f"  - TPU devices: {len(jax.devices('tpu'))}")
-        print(f"  - CPU workers: {-1}")
-        
-        gp = GeneticProgramming(
-            population_size=200,
-            max_generations=100,
-            parent_selection_rate=0.16,
-            mutation_rate=0.3,
-            random_injection_count=3,
-            fitness_threshold=0.95,
-            max_depth_range=(1, 3),
-            max_children_range=(1, 3),
-            feature_range=(5, 30),
-            use_real_fitness=False,
-            use_gpu=use_gpu,
-            use_tpu=use_tpu,
-            n_jobs=-1
-        )
-        
-        best_solution, best_fitness = gp.run()
-        elapsed = time.time() - start_time
-        
-        results.append({
-            'config': config_name,
-            'fitness': best_fitness,
-            'time': elapsed
-        })
-        
-        print(f"Résultats:")
-        print(f"  - Fitness: {best_fitness:.4f}")
-        print(f"  - Temps: {elapsed:.2f}s")
-
-        print_tree(best_solution)
-    
-    # Afficher le résumé comparatif
-    if len(results) > 1:
-        print("\n" + "="*60)
-        print("COMPARAISON DES PERFORMANCES")
+    # =========================================================================
+    # OPTION 3: Données synthétiques (pour tests)
+    # =========================================================================
+    if not loader_manual.data_frames:
+        print(f"\n{'='*60}")
+        print("OPTION 3: Génération de données synthétiques pour test")
         print("="*60)
         
-        baseline = results[0]['time']
-        print(f"\n{'Configuration':<15} {'Temps (s)':<12} {'Speedup':<10} {'Fitness':<10}")
-        print("-" * 50)
-        for r in results:
-            speedup = baseline / r['time']
-            print(f"{r['config']:<15} {r['time']:<12.2f} {speedup:<10.2f}x {r['fitness']:<10.4f}")
+        np.random.seed(42)
+        n_samples = 200
+        
+        omics_data_synthetic = {
+            'GeneExpression_Oncotype': np.random.randn(n_samples, 50),
+            'GeneExpression_PAM50': np.random.randn(n_samples, 60),
+            'GeneExpression_Union': np.random.randn(n_samples, 70)
+        }
+        
+        survival_times = np.random.exponential(scale=10, size=n_samples)
+        survival_times = np.abs(survival_times)
+        survival_events = np.random.binomial(1, 0.7, size=n_samples)
+        
+        print(f"\nDonnées synthétiques générées:")
+        for omics_type, data in omics_data_synthetic.items():
+            print(f"  - {omics_type:40s} {data.shape}")
+        print(f"\nDonnées de survie:")
+        print(f"  - Temps: min={survival_times.min():.2f}, max={survival_times.max():.2f}")
+        print(f"  - Événements: {survival_events.sum()}/{len(survival_events)}")
+        
+        # Exécuter GP avec données synthétiques
+        print(f"\n{'='*60}")
+        print("EXÉCUTION AVEC DONNÉES SYNTHÉTIQUES")
+        print(f"{'='*60}")
+        
+        gp_synthetic = GeneticProgramming(
+            population_size=10,
+            max_generations=5,
+            parent_selection_rate=0.20,
+            mutation_rate=0.3,
+            elitism_count=2,
+            random_injection_count=2,
+            fitness_threshold=0.95,
+            max_depth_range=(1, 2),
+            max_children_range=(1, 2),
+            feature_range=(5, 20),
+            use_real_fitness=False,  # Fitness simulée pour test rapide
+            omics_data=omics_data_synthetic,
+            survival_data=(survival_times, survival_events),
+            omics_types=list(omics_data_synthetic.keys()),
+            n_folds=3,
+            use_gpu=False,
+            use_tpu=False,
+            n_jobs=2
+        )
+        
+        best_synthetic, fitness_synthetic = gp_synthetic.run()
+        
+        print(f"\n{'='*60}")
+        print("RÉSULTATS SYNTHÉTIQUES")
+        print(f"{'='*60}")
+        print(f"Fitness: {fitness_synthetic:.4f}")
+        print(f"Profondeur: {best_synthetic.get_tree_depth()}")
     
+    # =========================================================================
+    # GUIDE D'UTILISATION
+    # =========================================================================
     print(f"\n{'='*60}")
-    print("INFORMATIONS SUR TPU")
-    print(f"{'='*60}")
-    print(f"""
-Google Cloud TPU:
-  - Les TPUs sont conçus pour les calculs matriciels massifs
-  - Excellents pour le deep learning et les opérations vectorisées
-  - Disponibles sur Google Cloud (TPU v2, v3, v4) et Google Colab
-  
-Configuration sur Google Colab:
-  1. Runtime > Change runtime type > TPU
-  2. Installer JAX: !pip install jax[tpu]
-  3. Le code détectera automatiquement le TPU
-
-Configuration sur Google Cloud:
-  1. Créer une VM TPU
-  2. Installer JAX: pip install jax[tpu]
-  3. Configurer les variables d'environnement TPU
-
-Avantages TPU pour ce problème:
-  - Calculs matriciels (variance, corrélation): ~5-20x plus rapide
-  - Parallélisation native avec JAX
-  - JIT compilation pour optimisation automatique
-  - Mémoire HBM très rapide (600 GB/s sur TPU v3)
-
-Comparaison générale:
-  - CPU: Flexible, toujours disponible, bon pour petites données
-  - GPU: Excellent pour matrices moyennes/grandes (>10K features)
-  - TPU: Meilleur pour très grandes matrices (>50K features)
-          et pour les batches de calculs parallèles
-
-TPU actuel: {'✓ ' + str(len(jax.devices('tpu'))) + ' device(s)' if TPU_AVAILABLE else '✗ Non disponible'}
-""")
-    
-    print(f"{'='*60}")
-    print("GUIDE D'UTILISATION")
+    print("GUIDE D'UTILISATION AVEC VOS DONNÉES")
     print(f"{'='*60}")
     print("""
-Utilisation avec TPU:
+Structure attendue des fichiers CSV:
 
-# Sur Google Colab avec TPU
+1. everything.csv (Sample ID comme index):
+   - Colonnes: Sample ID, OS_MONTHS, OS_STATUS, ...
+   - OS_STATUS peut être: 0/1 ou LIVING/DECEASED
+
+2. oncotype21.csv (Hugo_Symbol comme index):
+   - Index: Hugo_Symbol
+   - Colonnes: Échantillons (ex: TCGA-XX-XXXX)
+   - Valeurs: Expression des gènes
+
+3. pam50.csv, union_pam50_oncotype.csv, intersection_pam50_oncotype.csv:
+   - Même format que oncotype21.csv
+
+Utilisation rapide:
+
+# Charger depuis un répertoire
+loader = CSVDataLoader.load_from_directory(
+    directory='./data',
+    time_column='OS_MONTHS',
+    event_column='OS_STATUS'
+)
+
+# Récupérer les données
+omics_data, (times, events) = loader.get_data_for_gp()
+
+# Créer et exécuter GP
 gp = GeneticProgramming(
     population_size=50,
     max_generations=100,
     use_real_fitness=True,
-    omics_data=your_omics_data,
+    omics_data=omics_data,
     survival_data=(times, events),
-    use_tpu=True,      # Active le TPU
-    n_jobs=-1          # Parallélisation CPU en plus
+    omics_types=list(omics_data.keys()),
+    n_folds=5,
+    use_gpu=True,
+    n_jobs=-1
 )
-
-# Le code choisira automatiquement:
-# - TPU si use_tpu=True et disponible
-# - Sinon GPU si use_gpu=True et disponible  
-# - Sinon CPU avec parallélisation
 
 best_solution, c_index = gp.run()
 
-Installation:
-  - GPU: pip install cupy-cuda11x (ou cupy-cuda12x)
-  - TPU: pip install jax[tpu]
-  - Survival: pip install scikit-survival
+Notes:
+  - Les fichiers seront automatiquement transposés si nécessaire
+  - Les échantillons seront alignés avec everything.csv
+  - Les valeurs manquantes seront remplacées par 0
 """)
     print(f"{'='*60}")
