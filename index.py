@@ -1,6 +1,7 @@
 import random
 import copy
 import numpy as np
+import pandas as pd
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
 from sklearn.feature_selection import (
@@ -889,6 +890,77 @@ class GeneticProgramming:
         return self.best_individual, self.best_fitness
 
 
+def load_csv_files(csv_files: Dict[str, str]) -> Tuple[Dict[str, np.ndarray], pd.DataFrame]:
+    """
+    Charge les fichiers CSV avec les identifiants appropriés.
+    
+    Args:
+        csv_files: Dictionnaire avec {nom_dataset: chemin_fichier}
+                  Les noms possibles sont: 'everything', 'oncotype21', 'union_pam50_oncotype',
+                  'pam50', 'intersection_pam50_oncotype'
+    
+    Returns:
+        Tuple contenant:
+        - omics_data: Dictionnaire {nom_dataset: matrice numpy}
+        - everything_df: DataFrame complet avec les données de survie (Sample ID comme index)
+    """
+    
+    # Configuration des identifiants pour chaque fichier
+    id_columns = {
+        'everything': 'Sample ID',
+        'oncotype21': 'Hugo_Symbol',
+        'union_pam50_oncotype': 'Hugo_Symbol',
+        'pam50': 'Hugo_Symbol',
+        'intersection_pam50_oncotype': 'Hugo_Symbol'
+    }
+    
+    omics_data = {}
+    everything_df = None
+    
+    print("\n" + "="*60)
+    print("CHARGEMENT DES FICHIERS CSV")
+    print("="*60)
+    
+    for dataset_name, filepath in csv_files.items():
+        try:
+            # Charger le CSV
+            df = pd.read_csv(filepath)
+            
+            # Obtenir la colonne ID appropriée
+            id_col = id_columns.get(dataset_name)
+            
+            if id_col and id_col in df.columns:
+                # Définir l'index avec la colonne ID
+                df = df.set_index(id_col)
+                
+            print(f"\n✓ Chargé: {dataset_name}")
+            print(f"  - Fichier: {filepath}")
+            print(f"  - ID utilisé: {id_col}")
+            print(f"  - Shape: {df.shape}")
+            print(f"  - Colonnes numériques: {df.select_dtypes(include=[np.number]).shape[1]}")
+            
+            # Pour everything.csv, garder le DataFrame complet (données de survie)
+            if dataset_name == 'everything':
+                everything_df = df
+            else:
+                # Pour les autres fichiers, extraire les données numériques en matrice numpy
+                numeric_data = df.select_dtypes(include=[np.number])
+                omics_data[dataset_name] = numeric_data.values
+                
+        except FileNotFoundError:
+            print(f"\n✗ Fichier non trouvé: {filepath}")
+        except Exception as e:
+            print(f"\n✗ Erreur lors du chargement de {filepath}: {e}")
+    
+    print("\n" + "="*60)
+    print(f"Datasets chargés: {len(omics_data)}")
+    if everything_df is not None:
+        print(f"Données de survie: {everything_df.shape}")
+    print("="*60)
+    
+    return omics_data, everything_df
+
+
 # Exemple d'utilisation
 if __name__ == "__main__":
     print("="*60)
@@ -901,16 +973,41 @@ if __name__ == "__main__":
     print(f"  - TPU (JAX): {'✓ Disponible' if TPU_AVAILABLE else '✗ Non disponible'}")
     print(f"  - CPU cores: {mp.cpu_count()}")
     
-    # Générer des données synthétiques
-    np.random.seed(42)
-    n_samples = 200
-    n_features = 100
+    # Charger les fichiers CSV
+    csv_files = {
+        'everything': 'everything.csv',
+        'oncotype21': 'oncotype21.csv',
+        'union_pam50_oncotype': 'union_pam50_oncotype.csv',
+        'pam50': 'pam50.csv',
+        'intersection_pam50_oncotype': 'intersection_pam50_oncotype.csv'
+    }
     
-    X_synthetic = np.random.randn(n_samples, n_features)
-    y_synthetic = np.random.exponential(scale=10, size=n_samples) + \
-                  0.5 * X_synthetic[:, 0] + 0.3 * X_synthetic[:, 1]
+    omics_data_real, everything_df = load_csv_files(csv_files)
     
-    print(f"\nDonnées synthétiques: {n_samples} échantillons, {n_features} features")
+    # Si aucun fichier n'a été chargé, utiliser des données synthétiques
+    if len(omics_data_real) == 0:
+        print("\n⚠ Aucun fichier CSV trouvé, génération de données synthétiques...")
+        np.random.seed(42)
+        n_samples = 200
+        n_features = 100
+        
+        X_synthetic = np.random.randn(n_samples, n_features)
+        y_synthetic = np.random.exponential(scale=10, size=n_samples) + \
+                      0.5 * X_synthetic[:, 0] + 0.3 * X_synthetic[:, 1]
+        
+        print(f"\nDonnées synthétiques: {n_samples} échantillons, {n_features} features")
+    else:
+        # Utiliser les données réelles
+        # Pour les tests, on utilise les données du premier dataset
+        first_dataset = list(omics_data_real.keys())[0]
+        X_synthetic = omics_data_real[first_dataset]
+        n_samples, n_features = X_synthetic.shape
+        
+        # Créer une variable cible synthétique pour les tests
+        y_synthetic = np.random.exponential(scale=10, size=n_samples) + \
+                      0.5 * X_synthetic[:, 0] + 0.3 * X_synthetic[:, 1]
+        
+        print(f"\nUtilisation des données réelles de '{first_dataset}': {n_samples} échantillons, {n_features} features")
     
     # Test des algorithmes de sélection avec différents accélérateurs
     print(f"\nTest de sélection de 20 features:\n")
@@ -959,25 +1056,41 @@ if __name__ == "__main__":
         print()
     
     print("="*60)
-    print("GÉNÉRATION DE DONNÉES DE SURVIE SYNTHÉTIQUES")
+    print("PRÉPARATION DES DONNÉES MULTI-OMICS")
     print("="*60)
     
-    omics_data_synthetic = {
-        'miRNA': np.random.randn(n_samples, 50),
-        'GeneExpression': np.random.randn(n_samples, 60),
-        'Methylation': np.random.randn(n_samples, 70)
-    }
+    # Utiliser les données réelles si disponibles, sinon générer des données synthétiques
+    if len(omics_data_real) > 0:
+        omics_data_synthetic = omics_data_real
+        print(f"\nUtilisation des données multi-omics réelles:")
+        for omics_type, data in omics_data_synthetic.items():
+            print(f"  - {omics_type}: {data.shape}")
+    else:
+        omics_data_synthetic = {
+            'miRNA': np.random.randn(n_samples, 50),
+            'GeneExpression': np.random.randn(n_samples, 60),
+            'Methylation': np.random.randn(n_samples, 70)
+        }
+        print(f"\nDonnées multi-omics synthétiques générées:")
+        for omics_type, data in omics_data_synthetic.items():
+            print(f"  - {omics_type}: {data.shape}")
     
-    survival_times = np.random.exponential(scale=10, size=n_samples) + \
-                    0.3 * omics_data_synthetic['miRNA'][:, 0] + \
-                    0.2 * omics_data_synthetic['GeneExpression'][:, 1]
-    survival_times = np.abs(survival_times)
-    survival_events = np.random.binomial(1, 0.7, size=n_samples)
+    # Générer ou extraire les données de survie
+    if everything_df is not None and 'survival_time' in everything_df.columns and 'survival_event' in everything_df.columns:
+        # Utiliser les données de survie réelles
+        survival_times = everything_df['survival_time'].values
+        survival_events = everything_df['survival_event'].values
+        print(f"\nUtilisation des données de survie réelles:")
+    else:
+        # Générer des données de survie synthétiques
+        first_data = list(omics_data_synthetic.values())[0]
+        survival_times = np.random.exponential(scale=10, size=first_data.shape[0]) + \
+                        0.3 * first_data[:, 0] + \
+                        0.2 * first_data[:, min(1, first_data.shape[1]-1)]
+        survival_times = np.abs(survival_times)
+        survival_events = np.random.binomial(1, 0.7, size=first_data.shape[0])
+        print(f"\nGénération de données de survie synthétiques:")
     
-    print(f"\nDonnées multi-omics générées:")
-    for omics_type, data in omics_data_synthetic.items():
-        print(f"  - {omics_type}: {data.shape}")
-    print(f"\nDonnées de survie:")
     print(f"  - Temps: min={survival_times.min():.2f}, max={survival_times.max():.2f}")
     print(f"  - Événements: {survival_events.sum()}/{len(survival_events)} ({100*survival_events.mean():.1f}%)")
     
