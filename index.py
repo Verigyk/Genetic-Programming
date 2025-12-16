@@ -871,10 +871,7 @@ class GeneticProgramming:
                 X_train = integrated_features[train_idx]
                 X_val = integrated_features[val_idx]
 
-                print("Is nan in X_train")
-                print(np.isnan(np.array(X_train)).sum())
-                print("Is nan in X_val")
-                print(np.isnan(np.array(X_val)).sum())
+                print(self.y['Overall Survival (Months)'].iloc[train_idx][self.y['Overall Survival (Months)'].iloc[train_idx] < 0])
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
@@ -960,7 +957,6 @@ class GeneticProgramming:
             
             if node.is_leaf():
                 features = self.dataframes[node.omics_type]
-                print(node.omics_type)
                 return features
             
             child_features = []
