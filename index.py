@@ -173,10 +173,10 @@ class CSVDataLoader:
             [df.index for df in dataframes.values()]
         )
 
-        filtered_dataframes = [
-            df[df.index.isin(common_ids)]
-            for df in dataframes.values()
-        ]
+        filtered_dataframes = {
+            key : dataframes[key][dataframes[key].index.isin(common_ids)]
+            for key in dataframes
+        }
 
         self.y = self.y[self.y.index.isin(common_ids)]
 
