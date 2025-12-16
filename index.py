@@ -846,37 +846,41 @@ class GeneticProgramming:
         def process_node(node: TreeNode) -> np.ndarray:
             """Traite un noeud récursivement (bottom-up)"""
             
-            if node.is_leaf():
-                if node.omics_type == None:
+            try:
+                if node.is_leaf():
+                    if node.omics_type == None:
+                        return np.array([])
+
+                    features = self.dataframes[node.omics_type]
+
+                    # CORRECTION : Convertir DataFrame en numpy array
+                    if isinstance(features, pd.DataFrame):
+                        return features.values
+                    return np.asarray(features)  # Au cas où ce soit autre chose
+                
+                child_features = []
+                for child in node.children:
+                    child_result = process_node(child)
+                    if child_result.size > 0:
+                        child_features.append(child_result)
+
+                
+                if not child_features:
                     return np.array([])
+                
+                concatenated = np.hstack(child_features)
 
-                features = self.dataframes[node.omics_type]
-
-                # CORRECTION : Convertir DataFrame en numpy array
-                if isinstance(features, pd.DataFrame):
-                    return features.values
-                return np.asarray(features)  # Au cas où ce soit autre chose
-            
-            child_features = []
-            for child in node.children:
-                child_result = process_node(child)
-                if child_result.size > 0:
-                    child_features.append(child_result)
-
-            
-            if not child_features:
-                return np.array([])
-            
-            concatenated = np.hstack(child_features)
-
-            selected_features, _ = FeatureSelector.select_features(
-                X=concatenated,
-                y=y['Overall Survival (Months)'],
-                method=node.feature_selection_algo,
-                n_features=min(node.num_features, concatenated.shape[1]),
-                use_gpu=self.use_gpu,
-                use_tpu=self.use_tpu
-            )
+                selected_features, _ = FeatureSelector.select_features(
+                    X=concatenated,
+                    y=y['Overall Survival (Months)'],
+                    method=node.feature_selection_algo,
+                    n_features=min(node.num_features, concatenated.shape[1]),
+                    use_gpu=self.use_gpu,
+                    use_tpu=self.use_tpu
+                )
+            except Exception as e:
+                print("Exception")
+                print(node)
             
             return selected_features
         
