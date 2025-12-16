@@ -870,8 +870,6 @@ class GeneticProgramming:
             for train_idx, val_idx in kf.split(integrated_features):
                 X_train = integrated_features[train_idx]
                 X_val = integrated_features[val_idx]
-
-                print(self.y['Overall Survival (Months)'].iloc[train_idx][self.y['Overall Survival (Months)'].iloc[train_idx] < 0])
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
