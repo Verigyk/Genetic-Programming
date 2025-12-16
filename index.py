@@ -177,7 +177,7 @@ class CSVDataLoader:
             for df in dataframes.values()
         ]
 
-        self.y = self.y[self.y.Hugo_Symbol.isin(common_ids)]
+        self.y = self.y[self.y.index.isin(common_ids)]
 
         self.data_frames = filtered_dataframes
 
