@@ -1441,9 +1441,9 @@ if __name__ == "__main__":
                 elitism_count=3,
                 random_injection_count=3,
                 fitness_threshold=0.95,
-                max_depth_range=(1, 3),
+                max_depth_range=(1, 8),
                 max_children_range=(1, 3),
-                feature_range=(5, 10),
+                feature_range=(5, 90),
                 use_real_fitness=SKSURV_AVAILABLE,  # Active si disponible
                 dataframes=loader.data_frames,
                 y = loader.y,
