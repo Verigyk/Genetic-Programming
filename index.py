@@ -1212,6 +1212,7 @@ class GeneticProgramming:
                 offspring.extend([ind[0] for ind in mutated_offspring])
                 
                 # Compter les mutations
+                print([ind[1] for ind in mutated_offspring])
                 mutated_count = sum(ind[1] for ind in mutated_offspring)
                 print(f"Mutation appliquée à {mutated_count} noeuds")
         else:
