@@ -851,7 +851,11 @@ class GeneticProgramming:
                     return np.array([])
 
                 features = self.dataframes[node.omics_type]
-                return features
+
+                # CORRECTION : Convertir DataFrame en numpy array
+                if isinstance(features, pd.DataFrame):
+                    return features.values
+                return np.asarray(features)  # Au cas où ce soit autre chose
             
             child_features = []
             for child in node.children:
