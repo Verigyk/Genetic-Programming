@@ -1158,7 +1158,7 @@ if __name__ == "__main__":
                 fitness_threshold=0.95,
                 max_depth_range=(1, 3),
                 max_children_range=(1, 3),
-                feature_range=(5, 30),
+                feature_range=(5, 90),
                 use_real_fitness=SKSURV_AVAILABLE,  # Active si disponible
                 dataframes=loader.data_frames,
                 y = loader.y,
