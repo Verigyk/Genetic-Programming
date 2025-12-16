@@ -135,6 +135,12 @@ class CSVDataLoader:
                 # Définir l'index selon le fichier
                 id_col = "Hugo_Symbol"
                 
+                if file_name == "everything.csv":
+                    print("Définition de y")
+                    self.y = df[['Hugo_Symbol', 'Overall Survival (Months)']]
+                    self.y.set_index('Hugo_Symbol')
+                    df.drop('Overall Survival (Months)', axis=1)
+                    
                 if id_col and id_col in df.columns:
                     df = df.set_index(id_col)
                     if verbose:
@@ -143,11 +149,6 @@ class CSVDataLoader:
                     if verbose:
                         print(f"⚠ {file_name:40s} {df.shape} (index non défini)")
 
-                if file_name == "everything.csv":
-                    print("Définition de y")
-                    self.y = df[['Hugo_Symbol', 'Overall Survival (Months)']]
-                    self.y.set_index('Hugo_Symbol')
-                    df.drop('Overall Survival (Months)', axis=1)
                 
                 self.data_frames[file_name] = df
 
