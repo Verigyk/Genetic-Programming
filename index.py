@@ -755,14 +755,8 @@ class GeneticProgramming:
         Retourne le C-index moyen
         """
         try:
-            # Intégrer les features selon l'arbre chromosomique
-            times, events = self.survival_data
-            
-            # Créer un y dummy pour la sélection de features (on utilise times)
-            y_dummy = times
-            
             integrated_features = self._integrate_and_select_features(
-                individual, self.omics_data, y_dummy
+                individual, self.omics_data
             )
             
             # Vérifier que nous avons des features
@@ -779,12 +773,8 @@ class GeneticProgramming:
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
-                    event=events[train_idx].astype(bool),
-                    time=times[train_idx]
                 )
                 y_val = Surv.from_arrays(
-                    event=events[val_idx].astype(bool),
-                    time=times[val_idx]
                 )
                 
                 # Entraîner le modèle Gradient Boosting Survival
@@ -802,8 +792,6 @@ class GeneticProgramming:
                 
                 # Calculer le C-index
                 c_index = concordance_index_censored(
-                    events[val_idx].astype(bool),
-                    times[val_idx],
                     predictions
                 )[0]
                 
@@ -859,16 +847,12 @@ class GeneticProgramming:
         Intègre les données multi-omics selon l'arbre chromosomique (bottom-up)
         Avec support GPU/TPU pour les opérations de sélection
         """
-        node_features = {}
         
         def process_node(node: TreeNode) -> np.ndarray:
             """Traite un noeud récursivement (bottom-up)"""
-            if id(node) in node_features:
-                return node_features[id(node)]
             
             if node.is_leaf():
-                features = omics_data.get(node.omics_type, np.array([]))
-                node_features[id(node)] = features
+                features = self.dataframes.get(node.omics_type)
                 return features
             
             child_features = []
@@ -876,14 +860,13 @@ class GeneticProgramming:
                 child_result = process_node(child)
                 if child_result.size > 0:
                     child_features.append(child_result)
+
             
             if not child_features:
-                node_features[id(node)] = np.array([])
                 return np.array([])
             
             concatenated = np.hstack(child_features)
-            
-            # Appliquer la sélection de features avec TPU/GPU si disponible
+
             selected_features, _ = FeatureSelector.select_features(
                 X=concatenated,
                 y=y,
@@ -893,8 +876,7 @@ class GeneticProgramming:
                 use_tpu=self.use_tpu
             )
             
-            node_features[id(node)] = selected_features
-            return selected_features
+            return concatenated
         
         final_features = process_node(individual)
         return final_features
