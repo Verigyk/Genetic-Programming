@@ -776,7 +776,7 @@ class GeneticProgramming:
         """
         try:
             integrated_features = self._integrate_and_select_features(
-                individual, self.
+                individual, self.y
             )
             
             # Vérifier que nous avons des features
