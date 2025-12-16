@@ -844,6 +844,7 @@ class GeneticProgramming:
             
         except Exception as e:
             print(f"Error in real fitness calculation: {str(e)}")
+            traceback.print_exc()
             return 0.0
     
     def _evaluate_simulated_fitness(self, individual: TreeNode) -> float:
