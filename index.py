@@ -1062,6 +1062,7 @@ class GeneticProgramming:
         
         # Boucle évolutionnaire
         while True:
+            print_tree(self.best_individual)
             self.generation += 1
             
             # 3. Stopping criteria
@@ -1093,8 +1094,6 @@ class GeneticProgramming:
             
             # 8. Retour à la fitness calculation
             self.fitness_calculation()
-
-            print_tree(self.best_individual)
         
         print("\n" + "=" * 60)
         print("ALGORITHME TERMINÉ")
