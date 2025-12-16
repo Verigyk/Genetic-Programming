@@ -558,6 +558,7 @@ class GeneticProgramming:
         self.n_folds = n_folds
         self.dataframes = dataframes
         self.y = y
+        self.best_train_fitness = 0
         
         # Configuration TPU (priorité sur GPU)
         self.use_tpu = use_tpu and TPU_AVAILABLE
@@ -696,13 +697,14 @@ class GeneticProgramming:
                     print(f"  Progression: {i + 1}/{len(self.population)} individus évalués")
         
         # Mise à jour du meilleur individu
-        max_fitness_idx = self.fitness_scores.index(max(self.fitness_scores))
-        if self.fitness_scores[max_fitness_idx] > self.best_fitness:
-            self.best_fitness = self.fitness_scores[max_fitness_idx]
+        max_fitness_idx = self.fitness_scores.index(max(self.fitness_scores[:, 0]))
+        if self.fitness_scores[max_fitness_idx][0] > self.best_fitness:
+            self.best_fitness = self.fitness_scores[max_fitness_idx][0]
+            self.best_train_fitness = self.fitness_scores[max_fitness_idx][1]
             self.best_individual = copy.deepcopy(self.population[max_fitness_idx])
         
-        avg_fitness = sum(self.fitness_scores) / len(self.fitness_scores)
-        print(f"Fitness moyenne: {avg_fitness:.4f}, Meilleure fitness: {self.best_fitness:.4f}")
+        avg_fitness = sum(self.fitness_scores[:, 0]) / len(self.fitness_scores[:, 0])
+        print(f"Fitness moyenne: {avg_fitness:.4f}, Meilleure fitness: {self.best_fitness:.4f}, Fitness train : {self.best_train_fitness:.4f}")
     
     @staticmethod
     def _evaluate_fitness_wrapper(individual: TreeNode, 
@@ -758,6 +760,7 @@ class GeneticProgramming:
             # Validation croisée 5-fold
             kf = KFold(n_splits=self.n_folds, shuffle=True, random_state=42)
             c_indices = []
+            c_indices_train = []
             
             for train_idx, val_idx in kf.split(integrated_features):
                 X_train = integrated_features[train_idx]
@@ -783,18 +786,27 @@ class GeneticProgramming:
                 
                 # Prédire et calculer le C-index
                 predictions = gb_surv.predict(X_val)
+
+                train_predictions = gb_surv.predict(X_val)
                 
                 # Calculer le C-index
                 c_index = concordance_index_censored(y_val['event'],
                     y_val['time'],
                     predictions
                 )[0]
+
+                c_index_train = concordance_index_censored(y_train['event'],
+                    y_train['time'],
+                    train_predictions
+                )[0]
                 
                 c_indices.append(c_index)
+                c_indices_train.append(c_index_train)
             
             # Retourner le C-index moyen
             mean_c_index = np.mean(c_indices)
-            return mean_c_index
+            mean_c_index_train = np.mean(c_indices_train)
+            return mean_c_index, mean_c_index_train
             
         except Exception as e:
             print(f"Error in real fitness calculation: {str(e)}")
@@ -1197,7 +1209,7 @@ class GeneticProgramming:
                 
                 # Remplacer la liste offspring
                 offspring.clear()
-                offspring.extend(mutated_offspring)
+                offspring.extend([ind[0] for ind in mutated_offspring])
                 
                 # Compter les mutations
                 mutated_count = sum(ind[1] for ind in mutated_offspring)
@@ -1279,7 +1291,7 @@ class GeneticProgramming:
                     if available_omics:
                         node.omics_type = random.choice(available_omics)
         
-        return individual
+        return individual, mutated_count
     
     def create_random_individuals(self, count: int) -> List['TreeNode']:
         """
