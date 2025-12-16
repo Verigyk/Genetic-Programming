@@ -1273,6 +1273,37 @@ class GeneticProgramming:
         
         return individual, mutated_count
     
+    def create_random_individuals(self, count: int) -> List['TreeNode']:
+        """
+        Crée des individus aléatoires en parallèle
+        Utilisé pour l'injection de chromosomes aléatoires
+        """
+        if self.n_jobs > 1 and count > 5:
+            # Paralléliser la création d'individus aléatoires
+            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
+                create_func = partial(
+                    self._create_random_tree_wrapper,
+                    max_depth_range=self.max_depth_range,
+                    max_children_range=self.max_children_range,
+                    feature_algos=self.feature_algos,
+                    feature_range=self.feature_range,
+                    omics_types=self.omics_types
+                )
+                
+                # Générer les profondeurs aléatoires
+                depths = [random.randint(*self.max_depth_range) for _ in range(count)]
+                
+                random_individuals = list(executor.map(create_func, depths))
+        else:
+            # Fallback séquentiel
+            random_individuals = []
+            for _ in range(count):
+                max_depth = random.randint(*self.max_depth_range)
+                random_tree = self._create_random_tree(max_depth)
+                random_individuals.append(random_tree)
+        
+        return random_individuals
+    
     def run(self):
         """Exécution de l'algorithme de Genetic Programming"""
         print("=" * 60)
@@ -1304,11 +1335,8 @@ class GeneticProgramming:
             self.mutation(offspring)
             
             # 7. Injection de chromosomes aléatoires (selon le papier)
-            random_individuals = []
-            for _ in range(self.random_injection_count):
-                max_depth = random.randint(*self.max_depth_range)
-                random_tree = self._create_random_tree(max_depth)
-                random_individuals.append(random_tree)
+            random_individuals = self.create_random_individuals(self.random_injection_count)
+            print(f"Injection de {len(random_individuals)} chromosomes aléatoires")
             
             # Nouvelle population = élites + descendants + random injection
             self.population = parents + offspring + random_individuals
