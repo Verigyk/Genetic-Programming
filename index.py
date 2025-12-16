@@ -1257,7 +1257,7 @@ if __name__ == "__main__":
                 dataframes=loader.data_frames,
                 y = loader.y,
                 n_folds=3,
-                use_gpu=False,
+                use_gpu=True,
                 use_tpu=False,
                 n_jobs=-1
             )
