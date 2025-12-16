@@ -1279,7 +1279,7 @@ class GeneticProgramming:
                     if available_omics:
                         node.omics_type = random.choice(available_omics)
         
-        return individual, mutated_count
+        return individual
     
     def create_random_individuals(self, count: int) -> List['TreeNode']:
         """
