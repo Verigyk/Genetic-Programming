@@ -1188,7 +1188,7 @@ if __name__ == "__main__":
                 feature_range=(5, 30),
                 use_real_fitness=SKSURV_AVAILABLE,  # Active si disponible
                 dataframes=loader.data_frames,
-                y = loader.y
+                y = loader.y,
                 n_folds=3,
                 use_gpu=False,
                 use_tpu=False,
