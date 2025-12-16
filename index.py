@@ -923,6 +923,9 @@ class GeneticProgramming:
             return selected_features
         
         final_features = process_node(individual)
+
+        print(final_features)
+
         return final_features
     
     def check_stopping_criteria(self) -> bool:
