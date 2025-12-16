@@ -138,12 +138,12 @@ class CSVDataLoader:
                 if file_name == "everything.csv":
                     print("Définition de y")
                     df_y = df[[id_col, 'Overall Survival (Months)']].copy(deep=True)
-                    df_y.set_index(id_col)
+                    df_y.set_index(id_col, inplace=True)
 
                     self.y = df_y
 
                     if 'Overall Survival (Months)' in df.columns:
-                        df.drop('Overall Survival (Months)', axis=1)
+                        df.drop('Overall Survival (Months)', axis=1, inplace=True)
                     else:
                         print("Merde, il se passe quoi")
 
