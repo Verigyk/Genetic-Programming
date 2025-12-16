@@ -145,8 +145,8 @@ class CSVDataLoader:
 
                 if file_name == "everything.csv":
                     print("Définition de y")
-                    self.y = df[['Hugo_symbol', 'Overall Survival (Months)']]
-                    self.y.set_index('Hugo_symbol')
+                    self.y = df[['Hugo_Symbol', 'Overall Survival (Months)']]
+                    self.y.set_index('Hugo_Symbol')
                     df.drop('Overall Survival (Months)', axis=1)
                 
                 self.data_frames[file_name] = df
