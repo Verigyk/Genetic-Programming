@@ -192,7 +192,7 @@ class CSVDataLoader:
 
                     # Use .any(axis=1) to check if the string appears in *any* column of that row
                     # Use ~ to invert the mask (keep rows that do NOT have the string)
-                    df_y = df_y[~mask.any(axis=1)]
+                    df_y = df_y[~mask]
 
                     mapping_status = {
                         '0:LIVING': 0,
