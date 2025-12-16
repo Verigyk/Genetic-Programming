@@ -1244,7 +1244,7 @@ if __name__ == "__main__":
             
             gp = GeneticProgramming(
                 population_size=20,
-                max_generations=10,
+                max_generations=1,
                 parent_selection_rate=0.16,
                 mutation_rate=0.3,
                 elitism_count=3,
@@ -1278,6 +1278,19 @@ if __name__ == "__main__":
             print(f"\nOmics intégrés dans la meilleure solution:")
             for omics in sorted(omics_used):
                 print(f"  - {omics}")
+
+            def print_tree(node: TreeNode, indent: int = 0):
+                prefix = "  " * indent
+                if node.is_leaf():
+                    print(f"{prefix}└─ FEUILLE: {node.omics_type} (depth={node.depth})")
+                else:
+                    print(f"{prefix}└─ NOEUD: algo={node.feature_selection_algo}, "
+                        f"n_features={node.num_features}, depth={node.depth}, "
+                        f"max_depth={node.max_depth}")
+                    for child in node.children:
+                        print_tree(child, indent + 1)
+
+            print_tree(best_solution)
         
         except Exception as e:
             print(f"\n✗ Erreur lors du chargement: {str(e)}")
