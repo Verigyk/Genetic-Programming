@@ -787,7 +787,7 @@ class GeneticProgramming:
                 # Prédire et calculer le C-index
                 predictions = gb_surv.predict(X_val)
 
-                train_predictions = gb_surv.predict(X_val)
+                train_predictions = gb_surv.predict(X_train)
                 
                 # Calculer le C-index
                 c_index = concordance_index_censored(y_val['event'],
