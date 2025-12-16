@@ -763,7 +763,7 @@ class GeneticProgramming:
             
             # Vérifier que nous avons des features
             if integrated_features.size == 0 or integrated_features.shape[1] == 0:
-                return 0.0
+                return 0.0, 0.0
             
             # Validation croisée 5-fold
             kf = KFold(n_splits=self.n_folds, shuffle=True, random_state=42)
