@@ -140,7 +140,7 @@ class CSVDataLoader:
                     self.y = df[['Hugo_Symbol', 'Overall Survival (Months)']]
                     self.y.set_index('Hugo_Symbol')
                     df.drop('Overall Survival (Months)', axis=1)
-                    
+
                 if id_col and id_col in df.columns:
                     df = df.set_index(id_col)
                     if verbose:
@@ -161,11 +161,11 @@ class CSVDataLoader:
 
         common_ids = reduce(
             pd.Index.intersection,
-            [df['Hugo_Symbol'] for df in self.data_frames | {'y' :self.y}]
+            [df.Hugo_Symbol for df in self.data_frames | {'y' :self.y}]
         )
 
         filtered_dataframes = [
-            df[df['Hugo_Symbol'].isin(common_ids)]
+            df[df.Hugo_Symbol.isin(common_ids)]
             for df in self.data_frames | {'y' :self.y}
         ]
 
