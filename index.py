@@ -631,7 +631,7 @@ class GeneticProgramming:
             self.feature_algos = feature_algos
         
         # Types d'omics selon le papier
-        self.omics_types = ['Clinical Data', 'Pam50', 'Oncotype21']
+        self.omics_types = ['everything.csv', 'oncotype21.csv', 'pam50.csv']
         
         # Configuration pour fitness réelle
         self.use_real_fitness = use_real_fitness and SKSURV_AVAILABLE
@@ -893,7 +893,7 @@ class GeneticProgramming:
             """Traite un noeud récursivement (bottom-up)"""
             
             if node.is_leaf():
-                features = self.dataframes.get(node.omics_type)
+                features = self.dataframes[node.omics_type]
                 return features
             
             child_features = []
