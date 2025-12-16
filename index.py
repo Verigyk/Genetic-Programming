@@ -19,6 +19,51 @@ import multiprocessing as mp
 from functools import partial, reduce
 import os
 
+ajcc_n_stage_map = {
+    # 0. Négatif / Meilleur pronostic
+    'N0': 0,
+    'N0 (i-)': 0,
+
+    # 1. Cellules isolées (ITC) / Détection moléculaire
+    'N0 (i+)': 1,
+    'N0 (mol+)': 1,
+
+    # 2. Micrométastases (N1mi)
+    'N1mi': 2,
+
+    # 3. Métastases limitées (N1, N1a)
+    'N1': 3,
+    'N1a': 3,
+
+    # 4. Progression N1b
+    'N1b': 4,
+
+    # 5. Progression N1c
+    'N1c': 5,
+    
+    # 6. Métastases modérées (N2, N2a)
+    'N2': 6,
+    'N2a': 6,
+    
+    # 7. Progression N2b
+    'N2b': 7,
+    
+    # 8. Progression N2c
+    'N2c': 8,
+
+    # 9. Métastases étendues (N3)
+    'N3': 9,
+    
+    # 10. Le plus avancé (N3a, N3b, N3c)
+    'N3a': 10,
+    'N3b': 10,
+    'N3c': 10,
+    
+    # -99. Non évaluable / Non disponible (À traiter comme une valeur spéciale)
+    'NX': -99,
+    'NA': -99
+}
+
 # Import pour Gradient Boosting Survival
 try:
     from sksurv.ensemble import GradientBoostingSurvivalAnalysis
@@ -148,8 +193,15 @@ class CSVDataLoader:
 
                     self.y = df_y
 
+                    if not 'Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code' in df.keys:
+                        print("Say what") 
+
+                    df['Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code'] = df['Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code'].map(ajcc_n_stage_map)
+
                     df.drop('Overall Survival (Months)', axis=1, inplace=True)
                     df.drop('Overall Survival Status', axis=1, inplace=True)
+
+                    
 
                 if id_col and id_col in df.columns:
                     df = df.set_index(id_col)
