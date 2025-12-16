@@ -155,6 +155,8 @@ class CSVDataLoader:
                 if verbose:
                     print(f"✗ Erreur lors du chargement de {file_name}: {str(e)}")
         
+        print(self.y)
+
         common_ids = reduce(
             pd.Index.intersection,
             [df['Hugo_Symbol'] for df in self.data_frames | {'y' :self.y}]
