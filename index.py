@@ -193,7 +193,7 @@ class CSVDataLoader:
 
                     self.y = df_y
 
-                    if not 'Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code' in df.keys:
+                    if not 'Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code' in df.keys():
                         print("Say what") 
 
                     df['Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code'] = df['Neoplasm Disease Lymph Node Stage American Joint Committee on Cancer Code'].map(ajcc_n_stage_map)
