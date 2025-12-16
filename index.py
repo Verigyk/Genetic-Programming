@@ -559,6 +559,7 @@ class GeneticProgramming:
         self.dataframes = dataframes
         self.y = y
         self.best_train_fitness = 0
+        self.train_fitness_scores = []
         
         # Configuration TPU (priorité sur GPU)
         self.use_tpu = use_tpu and TPU_AVAILABLE
@@ -686,7 +687,7 @@ class GeneticProgramming:
                                       n_folds=self.n_folds,
                                       max_depth_range=self.max_depth_range)
                 
-                self.fitness_scores = list(executor.map(fitness_func, self.population))
+                fitness_scores_1 = list(executor.map(fitness_func, self.population))
         else:
             self.fitness_scores = []
             for i, individual in enumerate(self.population):
@@ -695,15 +696,22 @@ class GeneticProgramming:
                 
                 if self.use_real_fitness and (i + 1) % 5 == 0:
                     print(f"  Progression: {i + 1}/{len(self.population)} individus évalués")
-        
+
+        self.fitness_scores = []
+        self.train_fitness_scores = []
+
+        for fitness_score_couple in fitness_scores_1:
+            self.fitness_scores.append(fitness_score_couple[0])
+            self.train_fitness_scores.append(fitness_score_couple[1])
+
         # Mise à jour du meilleur individu
-        max_fitness_idx = self.fitness_scores.index(max(self.fitness_scores[:, 0]))
-        if self.fitness_scores[max_fitness_idx][0] > self.best_fitness:
-            self.best_fitness = self.fitness_scores[max_fitness_idx][0]
-            self.best_train_fitness = self.fitness_scores[max_fitness_idx][1]
+        max_fitness_idx = self.fitness_scores.index(max(self.fitness_scores))
+        if self.fitness_scores[max_fitness_idx] > self.best_fitness:
+            self.best_fitness = self.fitness_scores[max_fitness_idx]
+            self.best_train_fitness = self.train_fitness_scores[max_fitness_idx]
             self.best_individual = copy.deepcopy(self.population[max_fitness_idx])
         
-        avg_fitness = sum(self.fitness_scores[:, 0]) / len(self.fitness_scores[:, 0])
+        avg_fitness = sum(self.fitness_scores) / len(self.fitness_scores)
         print(f"Fitness moyenne: {avg_fitness:.4f}, Meilleure fitness: {self.best_fitness:.4f}, Fitness train : {self.best_train_fitness:.4f}")
     
     @staticmethod
