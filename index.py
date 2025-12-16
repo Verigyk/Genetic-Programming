@@ -137,9 +137,15 @@ class CSVDataLoader:
                 
                 if file_name == "everything.csv":
                     print("Définition de y")
-                    self.y = df[[id_col, 'Overall Survival (Months)']].copy(deep=True)
-                    self.y.set_index(id_col)
-                    df.drop('Overall Survival (Months)', axis=1)
+                    df_y = df[[id_col, 'Overall Survival (Months)']].copy(deep=True)
+                    df_y.set_index(id_col)
+
+                    self.y = df_y
+
+                    if 'Overall Survival (Months)' in df.columns:
+                        df.drop('Overall Survival (Months)', axis=1)
+                    else:
+                        print("Merde, il se passe quoi")
 
                 if id_col and id_col in df.columns:
                     df = df.set_index(id_col)
