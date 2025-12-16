@@ -218,6 +218,8 @@ class CSVDataLoader:
             except Exception as e:
                 if verbose:
                     print(f"✗ Erreur lors du chargement de {file_name}: {str(e)}")
+                    
+                    traceback.print_exc()
         
         print(self.y.keys())
 
