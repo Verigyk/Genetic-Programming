@@ -187,9 +187,7 @@ class CSVDataLoader:
 
                     print(df_y.shape)
 
-                    string_to_remove = 'NA'
-                    mask = df_y['Overall Survival Status'] == string_to_remove
-                    df_y = df_y[~mask]
+                    df_y = df_y[df_y['Overall Survival Status'].notna()]
                     
                     print(df_y.shape)
 
