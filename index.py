@@ -1244,7 +1244,7 @@ if __name__ == "__main__":
             
             gp = GeneticProgramming(
                 population_size=20,
-                max_generations=1,
+                max_generations=5,
                 parent_selection_rate=0.16,
                 mutation_rate=0.3,
                 elitism_count=3,
