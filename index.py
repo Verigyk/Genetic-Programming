@@ -244,111 +244,6 @@ class CSVDataLoader:
 
         return self.data_frames
     
-    def extract_survival_data(self, everything_df: pd.DataFrame = None,
-                            time_column: str = None,
-                            event_column: str = None,
-                            generate_synthetic: bool = True) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Extrait les données de survie depuis everything.csv
-        
-        Args:
-            everything_df: DataFrame everything.csv (ou None pour utiliser le chargé)
-            time_column: Nom de la colonne temps de survie (None = auto-détection)
-            event_column: Nom de la colonne événement (None = auto-détection)
-            generate_synthetic: Générer des données synthétiques si colonnes absentes
-        
-        Returns:
-            (survival_times, survival_events)
-        """
-        if everything_df is None:
-            everything_df = self.data_frames.get('everything.csv')
-        
-        if everything_df is None:
-            if generate_synthetic:
-                print("⚠ everything.csv non disponible, génération de données synthétiques")
-                n_samples = 200
-                self.survival_times = np.random.exponential(scale=10, size=n_samples)
-                self.survival_events = np.random.binomial(1, 0.7, size=n_samples)
-                self.sample_ids = np.array([f"Sample_{i}" for i in range(n_samples)])
-                return self.survival_times, self.survival_events
-            else:
-                raise ValueError("everything.csv n'est pas chargé")
-        
-        # Stocker les IDs des échantillons
-        self.sample_ids = everything_df.index.values
-        n_samples = len(self.sample_ids)
-        
-        # Auto-détection des colonnes de temps
-        time_candidates = ['OS_MONTHS', 'OS.MONTHS', 'TIME', 'SURVIVAL_TIME', 'TIME_TO_EVENT']
-        if time_column is None:
-            for candidate in time_candidates:
-                if candidate in everything_df.columns:
-                    time_column = candidate
-                    break
-        
-        # Auto-détection des colonnes d'événement
-        event_candidates = ['OS_STATUS', 'OS.STATUS', 'STATUS', 'EVENT', 'VITAL_STATUS']
-        if event_column is None:
-            for candidate in event_candidates:
-                if candidate in everything_df.columns:
-                    event_column = candidate
-                    break
-        
-        # Extraire les temps
-        if time_column and time_column in everything_df.columns:
-            self.survival_times = everything_df[time_column].values
-            print(f"✓ Colonne temps trouvée: {time_column}")
-        else:
-            if generate_synthetic:
-                print(f"⚠ Colonne temps non trouvée, génération synthétique")
-                self.survival_times = np.random.exponential(scale=10, size=n_samples)
-            else:
-                available_cols = ', '.join(everything_df.columns[:10].tolist())
-                raise ValueError(f"Colonne temps introuvable. Colonnes disponibles: {available_cols}...")
-        
-        # Extraire les événements
-        if event_column and event_column in everything_df.columns:
-            events = everything_df[event_column]
-            # Convertir si format texte (LIVING/DECEASED, ALIVE/DEAD, etc.)
-            if events.dtype == 'object':
-                # Essayer différentes variantes
-                deceased_values = ['DECEASED', 'DEAD', '1', 'TRUE', 'YES', 'EVENT']
-                events_lower = events.astype(str).str.upper()
-                self.survival_events = events_lower.isin(deceased_values).astype(int).values
-            else:
-                self.survival_events = events.astype(int).values
-            print(f"✓ Colonne événement trouvée: {event_column}")
-        else:
-            if generate_synthetic:
-                print(f"⚠ Colonne événement non trouvée, génération synthétique")
-                self.survival_events = np.random.binomial(1, 0.7, size=n_samples)
-            else:
-                available_cols = ', '.join(everything_df.columns[:10].tolist())
-                raise ValueError(f"Colonne événement introuvable. Colonnes disponibles: {available_cols}...")
-        
-        print(f"\n✓ Données de survie extraites:")
-        print(f"  - {len(self.survival_times)} échantillons")
-        print(f"  - Temps: min={self.survival_times.min():.2f}, max={self.survival_times.max():.2f}")
-        print(f"  - Événements: {self.survival_events.sum()}/{len(self.survival_events)} " +
-              f"({100*self.survival_events.mean():.1f}%)")
-        
-        return self.survival_times, self.survival_events
-    
-    def get_data_for_gp(self) -> Tuple[Dict[str, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
-        """
-        Retourne les données prêtes pour GeneticProgramming
-        
-        Returns:
-            (omics_data, (survival_times, survival_events))
-        """
-        if not self.omics_data:
-            raise ValueError("Appelez d'abord prepare_omics_data()")
-        
-        if self.survival_times is None or self.survival_events is None:
-            raise ValueError("Appelez d'abord extract_survival_data()")
-        
-        return self.omics_data, (self.survival_times, self.survival_events)
-    
     @staticmethod
     def load_from_directory(directory: str, 
                            time_column: str = None,
@@ -1243,8 +1138,8 @@ if __name__ == "__main__":
             available_omics = loader.files
             
             gp = GeneticProgramming(
-                population_size=20,
-                max_generations=5,
+                population_size=100,
+                max_generations=100,
                 parent_selection_rate=0.16,
                 mutation_rate=0.3,
                 elitism_count=3,
