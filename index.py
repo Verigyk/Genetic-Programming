@@ -212,7 +212,6 @@ class CSVDataLoader:
                         print(f"⚠ {file_name:40s} {df.shape} (index non défini)")
 
                 print(df.keys())
-                print(df)
                 self.data_frames[file_name] = df
 
                 
@@ -870,10 +869,10 @@ class GeneticProgramming:
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
-                    self.y['Overall Survival Status'][train_idx], self.y['Overall Survival (Months)'][train_idx]
+                    self.y['Overall Survival Status'].iloc(train_idx), self.y['Overall Survival (Months)'].iloc(train_idx)
                 )
                 y_val = Surv.from_arrays(
-                    self.y['Overall Survival Status'][val_idx], self.y['Overall Survival (Months)'][val_idx]
+                    self.y['Overall Survival Status'].iloc(val_idx), self.y['Overall Survival (Months)'].iloc(val_idx)
                 )
                 
                 # Entraîner le modèle Gradient Boosting Survival
