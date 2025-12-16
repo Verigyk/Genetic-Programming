@@ -1259,7 +1259,7 @@ if __name__ == "__main__":
                 n_folds=3,
                 use_gpu=True,
                 use_tpu=False,
-                n_jobs=-1
+                n_jobs=4
             )
             
             best_solution, best_fitness = gp.run()
