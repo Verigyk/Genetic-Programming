@@ -645,7 +645,6 @@ class GeneticProgramming:
                 feature_selection_algo='',
                 num_features=0,
                 children=[],
-                max_depth=max_depth,
                 omics_type=omics
             )
         
