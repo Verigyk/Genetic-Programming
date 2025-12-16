@@ -143,7 +143,7 @@ class CSVDataLoader:
                     if verbose:
                         print(f"⚠ {file_name:40s} {df.shape} (index non défini)")
 
-                if file_name == "everything":
+                if file_name == "everything.csv":
                     self.y = df['Hugo_symbol', 'Overall Survival (Months)']
                     self.y.set_index('Hugo_symbol')
                     df.drop('Overall Survival (Months)', axis=1)
