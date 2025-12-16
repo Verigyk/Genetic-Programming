@@ -867,8 +867,8 @@ class GeneticProgramming:
                 X_train = integrated_features[train_idx]
                 X_val = integrated_features[val_idx]
 
-                print(X_train)
-                print(X_val)
+                X_train = np.array(X_train).T
+                X_val = np.array(X_val).T
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
