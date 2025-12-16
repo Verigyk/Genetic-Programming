@@ -725,6 +725,7 @@ class GeneticProgramming:
             with executor_class(max_workers=self.n_jobs) as executor:
                 fitness_func = partial(self._evaluate_fitness_wrapper, 
                                       dataframes=self.dataframes,
+                                      y=self.y,
                                       use_real_fitness=self.use_real_fitness,
                                       use_gpu=self.use_gpu,
                                       use_tpu=self.use_tpu,
@@ -753,6 +754,7 @@ class GeneticProgramming:
     @staticmethod
     def _evaluate_fitness_wrapper(individual: TreeNode, 
                                   dataframes,
+                                  y,
                                   use_real_fitness: bool,
                                   use_gpu: bool,
                                   use_tpu: bool,
@@ -763,6 +765,7 @@ class GeneticProgramming:
         """
         temp_gp = GeneticProgramming(
             dataframes=dataframes,
+            y=y,
             use_real_fitness=use_real_fitness,
             use_gpu=use_gpu,
             use_tpu=use_tpu,
@@ -1185,6 +1188,7 @@ if __name__ == "__main__":
                 feature_range=(5, 30),
                 use_real_fitness=SKSURV_AVAILABLE,  # Active si disponible
                 dataframes=loader.data_frames,
+                y = loader.y
                 n_folds=3,
                 use_gpu=False,
                 use_tpu=False,
