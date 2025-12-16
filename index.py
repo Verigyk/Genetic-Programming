@@ -846,6 +846,7 @@ class GeneticProgramming:
             return self._evaluate_simulated_fitness(individual)
     
     def _evaluate_real_fitness(self, individual: TreeNode) -> float:
+        import math
         """
         Calcule la fitness réelle avec Gradient Boosting Survival et validation croisée 5-fold
         Retourne le C-index moyen
@@ -867,8 +868,10 @@ class GeneticProgramming:
                 X_train = integrated_features[train_idx]
                 X_val = integrated_features[val_idx]
 
-                X_train = np.array(X_train).T
-                X_val = np.array(X_val).T
+                print("Is nan in X_train")
+                print(any(math.isnan(x) for x in X_train))
+                print("Is nan in X_val")
+                print(any(math.isnan(x) for x in X_val))
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
@@ -980,8 +983,6 @@ class GeneticProgramming:
             return selected_features
         
         final_features = process_node(individual)
-
-        print(final_features)
 
         return final_features
     
