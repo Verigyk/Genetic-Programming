@@ -187,12 +187,7 @@ class CSVDataLoader:
 
                     string_to_remove = 'NA'
 
-                    # Create a boolean mask: True where the value matches the string
-                    mask = df_y['Overall Survival Status'].isin([string_to_remove])
-
-                    # Use .any(axis=1) to check if the string appears in *any* column of that row
-                    # Use ~ to invert the mask (keep rows that do NOT have the string)
-                    df_y = df_y[~mask]
+                    df_y = df_y[df_y['Overall Survival Status'] != 'NA']
 
                     mapping_status = {
                         '0:LIVING': 0,
