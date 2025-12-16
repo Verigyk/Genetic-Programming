@@ -944,7 +944,7 @@ class GeneticProgramming:
         
         if self.n_jobs > 1 and self.population_size > 10:
             # Paralléliser la création d'arbres
-            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
+            with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
                 create_func = partial(
                     self._create_random_tree_wrapper,
                     max_depth_range=self.max_depth_range,
@@ -1085,7 +1085,7 @@ class GeneticProgramming:
         
         if self.n_jobs > 1 and num_pairs > 10:
             # Paralléliser le crossover
-            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
+            with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
                 crossover_func = partial(
                     self._crossover_pair_wrapper,
                     parents=parents
@@ -1179,7 +1179,7 @@ class GeneticProgramming:
         
         if self.n_jobs > 1 and len(offspring) > 10:
             # Paralléliser les mutations
-            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
+            with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
                 mutate_func = partial(
                     self._mutate_individual_wrapper,
                     mutation_rate=self.mutation_rate,
@@ -1284,7 +1284,7 @@ class GeneticProgramming:
         """
         if self.n_jobs > 1 and count > 5:
             # Paralléliser la création d'individus aléatoires
-            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
+            with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
                 create_func = partial(
                     self._create_random_tree_wrapper,
                     max_depth_range=self.max_depth_range,
