@@ -957,6 +957,7 @@ class GeneticProgramming:
             
             if node.is_leaf():
                 features = self.dataframes[node.omics_type]
+                print(node.omics_type)
                 return features
             
             child_features = []
