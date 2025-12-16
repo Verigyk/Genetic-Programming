@@ -16,7 +16,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold
 from scipy.stats import pearsonr
 import multiprocessing as mp
-from functools import partial
+from functools import partial, reduce
 import os
 
 # Import pour Gradient Boosting Survival
@@ -141,13 +141,31 @@ class CSVDataLoader:
                 else:
                     if verbose:
                         print(f"⚠ {file_name:40s} {df.shape} (index non défini)")
+
+                if file_name == "everything":
+                    self.y = df['Hugo_symbol', 'Overall Survival (Months)']
+                    self.y.set_index('Hugo_symbol')
+                    df.drop('Overall Survival (Months)', axis=1)
                 
                 self.data_frames[file_name] = df
+
                 
             except Exception as e:
                 if verbose:
                     print(f"✗ Erreur lors du chargement de {file_name}: {str(e)}")
         
+        common_ids = reduce(
+            pd.Index.intersection,
+            [df['Hugo_Symbol'] for df in self.data_frames + self.y]
+        )
+
+        filtered_dataframes = [
+            df[df['Hugo_Symbol'].isin(common_ids)]
+            for df in self.data_frames + self.y
+        ]
+
+        self.data_frames = filtered_dataframes
+
         return self.data_frames
     
     def extract_survival_data(self, everything_df: pd.DataFrame = None,
@@ -529,6 +547,7 @@ class GeneticProgramming:
     
     def __init__(self,
                  dataframes,
+                 y,
                  population_size: int = 50,
                  max_generations: int = 100,
                  parent_selection_rate: float = 0.16,
@@ -558,6 +577,7 @@ class GeneticProgramming:
         self.feature_range = feature_range
         self.n_folds = n_folds
         self.dataframes = dataframes
+        self.y = y
         
         # Configuration TPU (priorité sur GPU)
         self.use_tpu = use_tpu and TPU_AVAILABLE
@@ -756,7 +776,7 @@ class GeneticProgramming:
         """
         try:
             integrated_features = self._integrate_and_select_features(
-                individual
+                individual, self.
             )
             
             # Vérifier que nous avons des features
