@@ -159,15 +159,19 @@ class CSVDataLoader:
         
         print(self.y)
 
+        dataframes = self.data_frames | {'y' :self.y}
+
         common_ids = reduce(
             pd.Index.intersection,
-            [df.Hugo_Symbol for _, df in self.data_frames | {'y' :self.y}]
+            [df.Hugo_Symbol for df in dataframes.values()]
         )
 
         filtered_dataframes = [
             df[df.Hugo_Symbol.isin(common_ids)]
-            for _, df in self.data_frames | {'y' :self.y}
+            for df in dataframes.values()
         ]
+
+        self.y = self.y[self.y.Hugo_Symbol.isin(common_ids)]
 
         self.data_frames = filtered_dataframes
 
