@@ -756,7 +756,7 @@ class GeneticProgramming:
         """
         try:
             integrated_features = self._integrate_and_select_features(
-                individual, self.omics_data
+                individual
             )
             
             # Vérifier que nous avons des features
@@ -841,7 +841,6 @@ class GeneticProgramming:
         return score
     
     def _integrate_and_select_features(self, individual: TreeNode, 
-                                      omics_data: Dict[str, np.ndarray],
                                       y: np.ndarray) -> np.ndarray:
         """
         Intègre les données multi-omics selon l'arbre chromosomique (bottom-up)
@@ -876,7 +875,7 @@ class GeneticProgramming:
                 use_tpu=self.use_tpu
             )
             
-            return concatenated
+            return selected_features
         
         final_features = process_node(individual)
         return final_features
