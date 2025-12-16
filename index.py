@@ -94,6 +94,7 @@ try:
     
     # Vérifier si TPU est disponible
     TPU_AVAILABLE = len(jax.devices('tpu')) > 0
+    TPU_AVAILABLE = False
     
     if TPU_AVAILABLE:
         print(f"✓ TPU disponible: {len(jax.devices('tpu'))} device(s)")
@@ -1168,7 +1169,7 @@ if __name__ == "__main__":
                 n_folds=3,
                 use_gpu=True,
                 use_tpu=False,
-                n_jobs=4
+                n_jobs=-1
             )
             
             best_solution, best_fitness = gp.run()
