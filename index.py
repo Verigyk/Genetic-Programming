@@ -617,7 +617,7 @@ class GeneticProgramming:
         self.population = []
         for _ in range(self.population_size):
             max_depth = random.randint(*self.max_depth_range)
-            tree = self._create_random_tree(max_depth, current_depth=0)
+            tree = self._create_random_tree(max_depth)
             self.population.append(tree)
         print(f"Population de {self.population_size} individus créée")
     
