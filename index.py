@@ -212,6 +212,7 @@ class CSVDataLoader:
                         print(f"⚠ {file_name:40s} {df.shape} (index non défini)")
 
                 print(df.keys())
+                print(df)
                 self.data_frames[file_name] = df
 
                 
