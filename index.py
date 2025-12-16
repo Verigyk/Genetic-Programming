@@ -290,7 +290,6 @@ class TreeNode:
     feature_selection_algo: str  # Algorithme de sélection de features
     num_features: int  # Nombre de features à sélectionner
     children: List['TreeNode']
-    depth: int  # Profondeur actuelle du noeud
     omics_type: Optional[str] = None  # Type d'omics pour les feuilles
     
     def is_leaf(self) -> bool:
@@ -300,7 +299,7 @@ class TreeNode:
     def get_tree_depth(self) -> int:
         """Calcule la profondeur réelle de l'arbre"""
         if not self.children:
-            return self.depth
+            return self.max_depth
         return max(child.get_tree_depth() for child in self.children)
     
     def get_all_nodes(self) -> List['TreeNode']:
@@ -312,7 +311,7 @@ class TreeNode:
     
     def get_subtree_at_depth(self, target_depth: int) -> Optional['TreeNode']:
         """Trouve un sous-arbre à une profondeur spécifique"""
-        if self.depth == target_depth:
+        if self.max_depth == target_depth:
             return self
         for child in self.children:
             result = child.get_subtree_at_depth(target_depth)
@@ -323,10 +322,10 @@ class TreeNode:
 def print_tree(node: TreeNode, indent: int = 0):
     prefix = "  " * indent
     if node.is_leaf():
-        print(f"{prefix}└─ FEUILLE: {node.omics_type} (depth={node.depth})")
+        print(f"{prefix}└─ FEUILLE: {node.omics_type} (max_depth={node.max_depth})")
     else:
         print(f"{prefix}└─ NOEUD: algo={node.feature_selection_algo}, "
-            f"n_features={node.num_features}, depth={node.depth}, "
+            f"n_features={node.num_features}, max_depth={node.max_depth}, "
             f"max_depth={node.max_depth}")
         for child in node.children:
             print_tree(child, indent + 1)
@@ -622,7 +621,7 @@ class GeneticProgramming:
             self.population.append(tree)
         print(f"Population de {self.population_size} individus créée")
     
-    def _create_random_tree(self, max_depth: int, current_depth: int, parent_omics: List[str] = None) -> TreeNode:
+    def _create_random_tree(self, max_depth: int, parent_omics: List[str] = None) -> TreeNode:
         """
         Crée un arbre aléatoire récursivement
         Respecte les contraintes du papier:
@@ -634,7 +633,7 @@ class GeneticProgramming:
             parent_omics = []
         
         # Si on est à la profondeur maximale, créer une feuille
-        if current_depth >= max_depth:
+        if max_depth <= 0:
             available_omics = [o for o in self.omics_types if o not in parent_omics]
             if not available_omics:
                 available_omics = self.omics_types
@@ -646,7 +645,7 @@ class GeneticProgramming:
                 feature_selection_algo='',
                 num_features=0,
                 children=[],
-                depth=current_depth,
+                max_depth=max_depth,
                 omics_type=omics
             )
         
@@ -656,20 +655,19 @@ class GeneticProgramming:
         num_features = random.randint(*self.feature_range)
         
         node = TreeNode(
-            max_depth=random.randint(current_depth + 1, max_depth),
+            max_depth=max_depth-1,
             num_children=num_children,
             feature_selection_algo=algo,
             num_features=num_features,
             children=[],
-            depth=current_depth,
             omics_type=None
         )
         
         # Créer les enfants en évitant les doublons d'omics
         used_omics = []
         for _ in range(num_children):
-            child_max_depth = min(node.max_depth, max_depth)
-            child = self._create_random_tree(child_max_depth, current_depth + 1, used_omics)
+            child_max_depth = max_depth - 1
+            child = self._create_random_tree(child_max_depth, used_omics)
             node.children.append(child)
             if child.is_leaf():
                 used_omics.append(child.omics_type)
@@ -828,9 +826,9 @@ class GeneticProgramming:
         omics_diversity_score = unique_omics / len(self.omics_types)
         
         # Bonus pour profondeur intermédiaire (ni trop plat, ni trop profond)
-        depth = individual.get_tree_depth()
+        max_depth = individual.get_tree_depth()
         optimal_depth = (self.max_depth_range[0] + self.max_depth_range[1]) / 2
-        depth_score = 1.0 - abs(depth - optimal_depth) / self.max_depth_range[1]
+        depth_score = 1.0 - abs(max_depth - optimal_depth) / self.max_depth_range[1]
         
         # Pénalité pour complexité excessive
         complexity_penalty = len(nodes) / 50.0
@@ -862,7 +860,7 @@ class GeneticProgramming:
             
             if node.is_leaf():
                 if node.omics_type == None:
-                    return []
+                    return np.array([])
 
                 features = self.dataframes[node.omics_type]
                 return features
@@ -993,7 +991,7 @@ class GeneticProgramming:
         nodes_deeper = deeper.get_all_nodes()
         
         # Trouver un sous-arbre de profondeur correspondante
-        matching_nodes = [n for n in nodes_deeper if n.depth <= target_depth and n != deeper]
+        matching_nodes = [n for n in nodes_deeper if n.max_depth <= target_depth and n != deeper]
         
         if matching_nodes:
             target_node = random.choice(matching_nodes)
@@ -1022,8 +1020,7 @@ class GeneticProgramming:
                     
                     if not node.is_leaf():  # Noeud intermédiaire ou racine
                         # Régénération complète des sous-arbres
-                        old_depth = node.depth
-                        max_depth = node.max_depth if node.max_depth > old_depth else random.randint(*self.max_depth_range)
+                        max_depth = node.max_depth
                         
                         # Régénérer les enfants
                         node.children = []
@@ -1032,7 +1029,7 @@ class GeneticProgramming:
                         
                         used_omics = []
                         for _ in range(num_children):
-                            child = self._create_random_tree(max_depth, old_depth + 1, used_omics)
+                            child = self._create_random_tree(max_depth, used_omics)
                             node.children.append(child)
                             if child.is_leaf():
                                 used_omics.append(child.omics_type)
@@ -1083,7 +1080,7 @@ class GeneticProgramming:
             random_individuals = []
             for _ in range(self.random_injection_count):
                 max_depth = random.randint(*self.max_depth_range)
-                random_tree = self._create_random_tree(max_depth, current_depth=0)
+                random_tree = self._create_random_tree(max_depth)
                 random_individuals.append(random_tree)
             
             # Nouvelle population = élites + descendants + random injection
