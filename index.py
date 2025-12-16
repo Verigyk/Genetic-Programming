@@ -185,9 +185,11 @@ class CSVDataLoader:
                     df_y = df[[id_col, 'Overall Survival (Months)', 'Overall Survival Status']].copy(deep=True)
                     df_y.set_index(id_col, inplace=True)
 
-                    string_to_remove = 'NA'
+                    print(df_y.shape)
 
                     df_y = df_y[df_y['Overall Survival Status'] != 'NA']
+                    
+                    print(df_y.shape)
 
                     mapping_status = {
                         '0:LIVING': 0,
