@@ -522,6 +522,7 @@ class FeatureSelector:
         except:
             return FeatureSelector._variance_selection(X, n_features)
 
+
 class GeneticProgramming:
     """Algorithme de Genetic Programming avec parallélisation GPU/TPU/CPU"""
     
@@ -609,6 +610,16 @@ class GeneticProgramming:
         self.best_individual: Optional[TreeNode] = None
         self.best_fitness: float = 0.0
         self.generation: int = 0
+    
+    def initialize_population(self):
+        """Initialisation de la population aléatoire"""
+        print("Initialisation de la population...")
+        self.population = []
+        for _ in range(self.population_size):
+            max_depth = random.randint(*self.max_depth_range)
+            tree = self._create_random_tree(max_depth)
+            self.population.append(tree)
+        print(f"Population de {self.population_size} individus créée")
     
     def _create_random_tree(self, max_depth: int, parent_omics: List[str] = None) -> TreeNode:
         """
@@ -892,6 +903,61 @@ class GeneticProgramming:
         
         return False
     
+    def select_parents(self) -> List[TreeNode]:
+        """
+        Sélection des parents via élitisme et roulette wheel
+        Selon le papier: 16% de la population comme parents, avec élitisme
+        """
+        num_parents = max(2, int(self.population_size * self.parent_selection_rate))
+        
+        # Élitisme: garder les meilleurs (elitism_count chromosomes)
+        sorted_indices = sorted(range(len(self.fitness_scores)), 
+                              key=lambda i: self.fitness_scores[i], reverse=True)
+        parents = [copy.deepcopy(self.population[i]) for i in sorted_indices[:self.elitism_count]]
+        
+        # Roulette wheel pour le reste
+        remaining = num_parents - self.elitism_count
+        if remaining > 0:
+            total_fitness = sum(self.fitness_scores)
+            
+            # Éviter division par zéro
+            if total_fitness == 0:
+                total_fitness = 1e-10
+            
+            for _ in range(remaining):
+                pick = random.uniform(0, total_fitness)
+                current = 0
+                for i, fitness in enumerate(self.fitness_scores):
+                    current += fitness
+                    if current > pick:
+                        parents.append(copy.deepcopy(self.population[i]))
+                        break
+        
+        print(f"Sélection de {len(parents)} parents ({self.elitism_count} élites, {remaining} roulette wheel)")
+        return parents
+    
+    def crossover(self, parents: List[TreeNode]) -> List[TreeNode]:
+        """Opérateur de crossover avec deux types selon la profondeur"""
+        offspring = []
+        
+        while len(offspring) < self.population_size - len(parents):
+            parent1, parent2 = random.sample(parents, 2)
+            
+            depth1 = parent1.get_tree_depth()
+            depth2 = parent2.get_tree_depth()
+            
+            if depth1 == depth2:
+                # Crossover pour parents de même profondeur
+                child1, child2 = self._crossover_same_depth(parent1, parent2)
+            else:
+                # Crossover pour parents de profondeurs différentes
+                child1, child2 = self._crossover_different_depth(parent1, parent2)
+            
+            offspring.extend([child1, child2])
+        
+        print(f"Génération de {len(offspring)} descendants par crossover")
+        return offspring[:self.population_size - len(parents)]
+    
     def _crossover_same_depth(self, parent1: TreeNode, parent2: TreeNode) -> Tuple[TreeNode, TreeNode]:
         """Crossover pour parents de même profondeur"""
         child1 = copy.deepcopy(parent1)
@@ -934,344 +1000,50 @@ class GeneticProgramming:
         
         return deeper, shallower
     
-    def initialize_population(self):
-        """Initialisation parallélisée de la population aléatoire"""
-        print("Initialisation parallélisée de la population...")
-        
-        if self.n_jobs > 1 and self.population_size > 10:
-            # Paralléliser la création d'arbres
-            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-                create_func = partial(
-                    self._create_random_tree_wrapper,
-                    max_depth_range=self.max_depth_range,
-                    max_children_range=self.max_children_range,
-                    feature_algos=self.feature_algos,
-                    feature_range=self.feature_range,
-                    omics_types=self.omics_types
-                )
-                
-                # Générer les max_depth pour chaque individu
-                depths = [random.randint(*self.max_depth_range) 
-                         for _ in range(self.population_size)]
-                
-                self.population = list(executor.map(create_func, depths))
-        else:
-            # Fallback séquentiel
-            self.population = []
-            for _ in range(self.population_size):
-                max_depth = random.randint(*self.max_depth_range)
-                tree = self._create_random_tree(max_depth)
-                self.population.append(tree)
-        
-        print(f"Population de {self.population_size} individus créée")
-    
-    @staticmethod
-    def _create_random_tree_wrapper(max_depth: int,
-                                    max_depth_range: Tuple[int, int],
-                                    max_children_range: Tuple[int, int],
-                                    feature_algos: List[str],
-                                    feature_range: Tuple[int, int],
-                                    omics_types: List[str]) -> TreeNode:
-        """Wrapper statique pour création d'arbre (nécessaire pour parallélisation)"""
-        
-        def create_tree_recursive(depth: int, parent_omics: List[str] = None):
-            if parent_omics is None:
-                parent_omics = []
-            
-            if depth <= 0:
-                available_omics = [o for o in omics_types if o not in parent_omics]
-                if not available_omics:
-                    available_omics = omics_types
-                
-                omics = random.choice(available_omics)
-                return TreeNode(
-                    max_depth=0,
-                    num_children=0,
-                    feature_selection_algo='',
-                    num_features=0,
-                    children=[],
-                    omics_type=omics
-                )
-            
-            num_children = random.randint(*max_children_range)
-            algo = random.choice(feature_algos)
-            num_features = random.randint(*feature_range)
-            
-            node = TreeNode(
-                max_depth=depth-1,
-                num_children=num_children,
-                feature_selection_algo=algo,
-                num_features=num_features,
-                children=[],
-                omics_type=None
-            )
-            
-            used_omics = []
-            for _ in range(num_children):
-                child = create_tree_recursive(depth - 1, used_omics)
-                node.children.append(child)
-                if child.is_leaf():
-                    used_omics.append(child.omics_type)
-            
-            return node
-        
-        return create_tree_recursive(max_depth)
-    
-    def select_parents(self) -> List[TreeNode]:
-        """Sélection parallélisée des parents"""
-        num_parents = max(2, int(self.population_size * self.parent_selection_rate))
-        
-        # Élitisme: garder les meilleurs
-        sorted_indices = sorted(range(len(self.fitness_scores)), 
-                              key=lambda i: self.fitness_scores[i], reverse=True)
-        parents = [copy.deepcopy(self.population[i]) 
-                  for i in sorted_indices[:self.elitism_count]]
-        
-        # Roulette wheel parallélisée pour le reste
-        remaining = num_parents - self.elitism_count
-        
-        if remaining > 0:
-            total_fitness = sum(self.fitness_scores) or 1e-10
-            
-            if self.n_jobs > 1 and remaining > 20:
-                # Paralléliser la sélection roulette wheel
-                with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
-                    select_func = partial(
-                        self._roulette_wheel_select,
-                        population=self.population,
-                        fitness_scores=self.fitness_scores,
-                        total_fitness=total_fitness
-                    )
-                    
-                    selected = list(executor.map(select_func, range(remaining)))
-                    parents.extend(selected)
-            else:
-                # Fallback séquentiel
-                for _ in range(remaining):
-                    pick = random.uniform(0, total_fitness)
-                    current = 0
-                    for i, fitness in enumerate(self.fitness_scores):
-                        current += fitness
-                        if current > pick:
-                            parents.append(copy.deepcopy(self.population[i]))
-                            break
-        
-        print(f"Sélection de {len(parents)} parents "
-              f"({self.elitism_count} élites, {remaining} roulette wheel)")
-        return parents
-    
-    @staticmethod
-    def _roulette_wheel_select(idx: int,
-                               population: List[TreeNode],
-                               fitness_scores: List[float],
-                               total_fitness: float) -> TreeNode:
-        """Sélection roulette wheel individuelle (pour parallélisation)"""
-        pick = random.uniform(0, total_fitness)
-        current = 0
-        for i, fitness in enumerate(fitness_scores):
-            current += fitness
-            if current > pick:
-                return copy.deepcopy(population[i])
-        return copy.deepcopy(population[-1])
-    
-    def crossover(self, parents: List[TreeNode]) -> List[TreeNode]:
-        """Opérateur de crossover parallélisé"""
-        target_size = self.population_size - len(parents)
-        num_pairs = (target_size + 1) // 2
-        
-        if self.n_jobs > 1 and num_pairs > 10:
-            # Paralléliser le crossover
-            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-                crossover_func = partial(
-                    self._crossover_pair_wrapper,
-                    parents=parents
-                )
-                
-                results = list(executor.map(crossover_func, range(num_pairs)))
-                
-                # Aplatir les résultats
-                offspring = []
-                for child1, child2 in results:
-                    offspring.append(child1)
-                    if len(offspring) < target_size:
-                        offspring.append(child2)
-        else:
-            # Fallback séquentiel
-            offspring = []
-            while len(offspring) < target_size:
-                parent1, parent2 = random.sample(parents, 2)
-                
-                depth1 = parent1.get_tree_depth()
-                depth2 = parent2.get_tree_depth()
-                
-                if depth1 == depth2:
-                    child1, child2 = self._crossover_same_depth(parent1, parent2)
-                else:
-                    child1, child2 = self._crossover_different_depth(parent1, parent2)
-                
-                offspring.append(child1)
-                if len(offspring) < target_size:
-                    offspring.append(child2)
-        
-        print(f"Génération de {len(offspring)} descendants par crossover")
-        return offspring[:target_size]
-    
-    @staticmethod
-    def _crossover_pair_wrapper(idx: int, parents: List[TreeNode]) -> Tuple[TreeNode, TreeNode]:
-        """Wrapper pour crossover d'une paire (pour parallélisation)"""
-        parent1, parent2 = random.sample(parents, 2)
-        
-        depth1 = parent1.get_tree_depth()
-        depth2 = parent2.get_tree_depth()
-        
-        if depth1 == depth2:
-            return GeneticProgramming._crossover_same_depth_static(parent1, parent2)
-        else:
-            return GeneticProgramming._crossover_different_depth_static(parent1, parent2)
-    
-    @staticmethod
-    def _crossover_same_depth_static(parent1: TreeNode, 
-                                    parent2: TreeNode) -> Tuple[TreeNode, TreeNode]:
-        """Version statique de crossover same depth"""
-        child1 = copy.deepcopy(parent1)
-        child2 = copy.deepcopy(parent2)
-        
-        nodes1 = child1.get_all_nodes()[1:]
-        nodes2 = child2.get_all_nodes()[1:]
-        
-        if nodes1 and nodes2:
-            node1 = max(nodes1, key=lambda n: len(n.get_all_nodes()))
-            node2 = max(nodes2, key=lambda n: len(n.get_all_nodes()))
-            
-            node1.children, node2.children = node2.children, node1.children
-            node1.num_children, node2.num_children = node2.num_children, node1.num_children
-        
-        return child1, child2
-    
-    @staticmethod
-    def _crossover_different_depth_static(parent1: TreeNode,
-                                         parent2: TreeNode) -> Tuple['TreeNode', 'TreeNode']:
-        """Version statique de crossover different depth"""
-        if parent1.get_tree_depth() > parent2.get_tree_depth():
-            deeper, shallower = copy.deepcopy(parent1), copy.deepcopy(parent2)
-        else:
-            deeper, shallower = copy.deepcopy(parent2), copy.deepcopy(parent1)
-        
-        target_depth = shallower.get_tree_depth()
-        nodes_deeper = deeper.get_all_nodes()
-        
-        matching_nodes = [n for n in nodes_deeper 
-                         if n.max_depth <= target_depth and n != deeper]
-        
-        if matching_nodes:
-            target_node = random.choice(matching_nodes)
-            target_node.children = copy.deepcopy(shallower.children)
-            target_node.num_children = shallower.num_children
-        
-        return deeper, shallower
-    
     def mutation(self, offspring: List[TreeNode]):
-        """Opérateur de mutation parallélisé"""
-        
-        if self.n_jobs > 1 and len(offspring) > 10:
-            # Paralléliser les mutations
-            with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-                mutate_func = partial(
-                    self._mutate_individual_wrapper,
-                    mutation_rate=self.mutation_rate,
-                    max_children_range=self.max_children_range,
-                    feature_algos=self.feature_algos,
-                    feature_range=self.feature_range,
-                    omics_types=self.omics_types
-                )
-                
-                mutated_offspring = list(executor.map(mutate_func, offspring))
-                
-                # Remplacer la liste offspring
-                offspring.clear()
-                offspring.extend(mutated_offspring)
-                
-                # Compter les mutations
-                mutated_count = sum(ind[1] for ind in mutated_offspring)
-                print(f"Mutation appliquée à {mutated_count} noeuds")
-        else:
-            # Fallback séquentiel
-            mutated_count = 0
-            
-            for individual in offspring:
-                nodes = individual.get_all_nodes()
-                
-                for node in nodes:
-                    if random.random() < self.mutation_rate:
-                        mutated_count += 1
-                        
-                        if not node.is_leaf():
-                            max_depth = node.max_depth
-                            node.children = []
-                            num_children = random.randint(*self.max_children_range)
-                            node.num_children = num_children
-                            
-                            used_omics = []
-                            for _ in range(num_children):
-                                child = self._create_random_tree(max_depth, used_omics)
-                                node.children.append(child)
-                                if child.is_leaf():
-                                    used_omics.append(child.omics_type)
-                            
-                            node.feature_selection_algo = random.choice(self.feature_algos)
-                            node.num_features = random.randint(*self.feature_range)
-                        else:
-                            available_omics = [o for o in self.omics_types 
-                                             if o != node.omics_type]
-                            if available_omics:
-                                node.omics_type = random.choice(available_omics)
-            
-            print(f"Mutation appliquée à {mutated_count} noeuds")
-    
-    @staticmethod
-    def _mutate_individual_wrapper(individual: TreeNode,
-                                   mutation_rate: float,
-                                   max_children_range: Tuple[int, int],
-                                   feature_algos: List[str],
-                                   feature_range: Tuple[int, int],
-                                   omics_types: List[str]) -> Tuple[TreeNode, int]:
-        """Wrapper pour mutation individuelle (pour parallélisation)"""
+        """
+        Opérateur de mutation selon le papier:
+        - Pour chaque noeud, générer un nombre aléatoire
+        - Si < mutation_rate, muter le noeud
+        - Noeuds intermédiaires/racine: régénération complète des sous-arbres
+        - Feuilles: changement de type d'omics si alternatives disponibles
+        """
         mutated_count = 0
-        nodes = individual.get_all_nodes()
         
-        for node in nodes:
-            if random.random() < mutation_rate:
-                mutated_count += 1
-                
-                if not node.is_leaf():
-                    max_depth = node.max_depth
-                    node.children = []
-                    num_children = random.randint(*max_children_range)
-                    node.num_children = num_children
+        for individual in offspring:
+            nodes = individual.get_all_nodes()
+            
+            for node in nodes:
+                if random.random() < self.mutation_rate:
+                    mutated_count += 1
                     
-                    # Recréer les enfants
-                    used_omics = []
-                    for _ in range(num_children):
-                        child = GeneticProgramming._create_random_tree_wrapper(
-                            max_depth=max_depth,
-                            max_depth_range=(0, max_depth),
-                            max_children_range=max_children_range,
-                            feature_algos=feature_algos,
-                            feature_range=feature_range,
-                            omics_types=omics_types
-                        )
-                        node.children.append(child)
-                        if child.is_leaf():
-                            used_omics.append(child.omics_type)
-                    
-                    node.feature_selection_algo = random.choice(feature_algos)
-                    node.num_features = random.randint(*feature_range)
-                else:
-                    available_omics = [o for o in omics_types if o != node.omics_type]
-                    if available_omics:
-                        node.omics_type = random.choice(available_omics)
+                    if not node.is_leaf():  # Noeud intermédiaire ou racine
+                        # Régénération complète des sous-arbres
+                        max_depth = node.max_depth
+                        
+                        # Régénérer les enfants
+                        node.children = []
+                        num_children = random.randint(*self.max_children_range)
+                        node.num_children = num_children
+                        
+                        used_omics = []
+                        for _ in range(num_children):
+                            child = self._create_random_tree(max_depth, used_omics)
+                            node.children.append(child)
+                            if child.is_leaf():
+                                used_omics.append(child.omics_type)
+                        
+                        # Possibilité de changer l'algorithme de sélection
+                        node.feature_selection_algo = random.choice(self.feature_algos)
+                        node.num_features = random.randint(*self.feature_range)
+                        
+                    else:  # Noeud feuille
+                        # Changement de type d'omics
+                        available_omics = [o for o in self.omics_types if o != node.omics_type]
+                        if available_omics:
+                            node.omics_type = random.choice(available_omics)
         
-        return individual, mutated_count
+        print(f"Mutation appliquée à {mutated_count} noeuds")
     
     def run(self):
         """Exécution de l'algorithme de Genetic Programming"""
