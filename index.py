@@ -139,14 +139,17 @@ class CSVDataLoader:
                     print("Définition de y")
                     df_y = df[[id_col, 'Overall Survival (Months)', 'Overall Survival Status']].copy(deep=True)
                     df_y.set_index(id_col, inplace=True)
+                    mapping_status = {
+                        '0:LIVING': 0,
+                        '1:DECEASED': 1
+                    }
+
+                    df_y['Overall Survival Status'] = df_y['Overall Survival Status'].map(mapping_status)
 
                     self.y = df_y
 
-                    if 'Overall Survival (Months)' in df.columns:
-                        df.drop('Overall Survival (Months)', axis=1, inplace=True)
-                        df.drop('Overall Survival Status', axis=1, inplace=True)
-                    else:
-                        print("Merde, il se passe quoi")
+                    df.drop('Overall Survival (Months)', axis=1, inplace=True)
+                    df.drop('Overall Survival Status', axis=1, inplace=True)
 
                 if id_col and id_col in df.columns:
                     df = df.set_index(id_col)
