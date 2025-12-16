@@ -137,13 +137,14 @@ class CSVDataLoader:
                 
                 if file_name == "everything.csv":
                     print("Définition de y")
-                    df_y = df[[id_col, 'Overall Survival (Months)']].copy(deep=True)
+                    df_y = df[[id_col, 'Overall Survival (Months)', 'Overall Survival Status']].copy(deep=True)
                     df_y.set_index(id_col, inplace=True)
 
                     self.y = df_y
 
                     if 'Overall Survival (Months)' in df.columns:
                         df.drop('Overall Survival (Months)', axis=1, inplace=True)
+                        df.drop('Overall Survival Status', axis=1, inplace=True)
                     else:
                         print("Merde, il se passe quoi")
 
@@ -811,8 +812,10 @@ class GeneticProgramming:
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
+                    self.y['Overall Survival Status'].iloc(train_idx), self.y['Overall Survival (Months)'].iloc(train_idx)
                 )
                 y_val = Surv.from_arrays(
+                    self.y['Overall Survival Status'].iloc(val_idx), self.y['Overall Survival (Months)'].iloc(val_idx)
                 )
                 
                 # Entraîner le modèle Gradient Boosting Survival
