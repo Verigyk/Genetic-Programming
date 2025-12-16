@@ -188,7 +188,7 @@ class CSVDataLoader:
                     string_to_remove = 'NA'
 
                     # Create a boolean mask: True where the value matches the string
-                    mask = df_y.iloc['Overall Survival Status'].isin([string_to_remove])
+                    mask = df_y['Overall Survival Status'].isin([string_to_remove])
 
                     # Use .any(axis=1) to check if the string appears in *any* column of that row
                     # Use ~ to invert the mask (keep rows that do NOT have the string)
@@ -887,10 +887,10 @@ class GeneticProgramming:
                 
                 # Créer les structured arrays pour survival
                 y_train = Surv.from_arrays(
-                    self.y['Overall Survival Status'].loc[train_idx], self.y['Overall Survival (Months)'].loc[train_idx]
+                    self.y['Overall Survival Status'].iloc[train_idx], self.y['Overall Survival (Months)'].iloc[train_idx]
                 )
                 y_val = Surv.from_arrays(
-                    self.y['Overall Survival Status'].loc[val_idx], self.y['Overall Survival (Months)'].loc[val_idx]
+                    self.y['Overall Survival Status'].iloc[val_idx], self.y['Overall Survival (Months)'].iloc[val_idx]
                 )
                 
                 # Entraîner le modèle Gradient Boosting Survival
