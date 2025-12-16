@@ -149,7 +149,7 @@ class CSVDataLoader:
                     if verbose:
                         print(f"⚠ {file_name:40s} {df.shape} (index non défini)")
 
-                
+                print(df.keys())
                 self.data_frames[file_name] = df
 
                 
@@ -157,7 +157,7 @@ class CSVDataLoader:
                 if verbose:
                     print(f"✗ Erreur lors du chargement de {file_name}: {str(e)}")
         
-        print(self.y)
+        print(self.y.keys())
 
         dataframes = self.data_frames | {'y' :self.y}
 
