@@ -318,7 +318,17 @@ class TreeNode:
             if result:
                 return result
         return None
-
+    
+def print_tree(node: TreeNode, indent: int = 0):
+    prefix = "  " * indent
+    if node.is_leaf():
+        print(f"{prefix}└─ FEUILLE: {node.omics_type} (depth={node.depth})")
+    else:
+        print(f"{prefix}└─ NOEUD: algo={node.feature_selection_algo}, "
+            f"n_features={node.num_features}, depth={node.depth}, "
+            f"max_depth={node.max_depth}")
+        for child in node.children:
+            print_tree(child, indent + 1)
 
 class FeatureSelector:
     """
@@ -850,6 +860,9 @@ class GeneticProgramming:
             """Traite un noeud récursivement (bottom-up)"""
             
             if node.is_leaf():
+                if node.omics_type == None:
+                    return []
+
                 features = self.dataframes[node.omics_type]
                 return features
             
@@ -1080,6 +1093,8 @@ class GeneticProgramming:
             
             # 8. Retour à la fitness calculation
             self.fitness_calculation()
+
+            print_tree(self.best_individual)
         
         print("\n" + "=" * 60)
         print("ALGORITHME TERMINÉ")
@@ -1173,19 +1188,6 @@ if __name__ == "__main__":
             print(f"\nOmics intégrés dans la meilleure solution:")
             for omics in sorted(omics_used):
                 print(f"  - {omics}")
-
-            def print_tree(node: TreeNode, indent: int = 0):
-                prefix = "  " * indent
-                if node.is_leaf():
-                    print(f"{prefix}└─ FEUILLE: {node.omics_type} (depth={node.depth})")
-                else:
-                    print(f"{prefix}└─ NOEUD: algo={node.feature_selection_algo}, "
-                        f"n_features={node.num_features}, depth={node.depth}, "
-                        f"max_depth={node.max_depth}")
-                    for child in node.children:
-                        print_tree(child, indent + 1)
-
-            print_tree(best_solution)
         
         except Exception as e:
             print(f"\n✗ Erreur lors du chargement: {str(e)}")
