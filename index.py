@@ -893,7 +893,8 @@ class GeneticProgramming:
                 predictions = gb_surv.predict(X_val)
                 
                 # Calculer le C-index
-                c_index = concordance_index_censored(
+                c_index = concordance_index_censored(y_val['event'],
+                    y_val['time'],
                     predictions
                 )[0]
                 
