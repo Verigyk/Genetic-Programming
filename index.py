@@ -913,7 +913,7 @@ class GeneticProgramming:
 
             selected_features, _ = FeatureSelector.select_features(
                 X=concatenated,
-                y=y,
+                y=y['Overall Survival (Months)'],
                 method=node.feature_selection_algo,
                 n_features=min(node.num_features, concatenated.shape[1]),
                 use_gpu=self.use_gpu,
