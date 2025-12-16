@@ -104,6 +104,7 @@ class CSVDataLoader:
         self.sample_ids = None
         self.survival_times = None
         self.survival_events = None
+        self.y = []
     
     def load_csv_files(self, file_paths: Dict[str, str], verbose: bool = True) -> Dict[str, pd.DataFrame]:
         """
