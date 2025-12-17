@@ -187,6 +187,9 @@ class CSVDataLoader:
                     df = pd.read_csv(file_path, sep=r'\s+', index_col=0)
                     df = df.T
 
+                    df.drop("Entrez_Gene_Id", inplace=True)
+                    df = df.dropna()
+
                     print(df)
                 else:
                     df = pd.read_csv(file_path)
