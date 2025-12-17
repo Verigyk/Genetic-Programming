@@ -1171,8 +1171,9 @@ class GeneticProgramming:
             node1 = max(nodes1, key=lambda n: len(n.get_all_nodes()))
             node2 = max(nodes2, key=lambda n: len(n.get_all_nodes()))
             
-            node1.children, node2.children = node2.children, node1.children
-            node1.num_children, node2.num_children = node2.num_children, node1.num_children
+            if not node1.is_leaf() and not node2.is_leaf():
+                node1.children, node2.children = node2.children, node1.children
+                node1.num_children, node2.num_children = node2.num_children, node1.num_children
         
         return child1, child2
     
@@ -1193,8 +1194,10 @@ class GeneticProgramming:
         
         if matching_nodes:
             target_node = random.choice(matching_nodes)
-            target_node.children = copy.deepcopy(shallower.children)
-            target_node.num_children = shallower.num_children
+
+            if not target_node.is_leaf():
+                target_node.children = copy.deepcopy(shallower.children)
+                target_node.num_children = shallower.num_children
         
         return deeper, shallower
     
@@ -1269,6 +1272,9 @@ class GeneticProgramming:
         nodes = individual.get_all_nodes()
         
         for node in nodes:
+            if node.is_leaf():
+                continue
+
             if random.random() < mutation_rate:
                 mutated_count += 1
                 
