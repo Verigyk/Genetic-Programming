@@ -765,10 +765,7 @@ class GeneticProgramming:
             c_indices = []
             c_indices_train = []
             
-            print(self.dataframes['everything.csv'].shape[0])
             for train_idx, val_idx in kf.split(range(self.dataframes['everything.csv'].shape[0])):
-                
-                print(train_idx)
                 integrated_features = self._integrate_and_select_features(
                     individual, train_idx, self.y.iloc[train_idx]
                 )
@@ -777,7 +774,7 @@ class GeneticProgramming:
                 if integrated_features.size == 0 or integrated_features.shape[1] == 0:
                     return 0.0, 0.0
 
-                X_train = integrated_features[train_idx]
+                X_train = integrated_features
                 X_val = integrated_features[val_idx]
                 
                 # Créer les structured arrays pour survival
