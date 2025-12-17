@@ -1450,7 +1450,7 @@ if __name__ == "__main__":
             print(f"  - CPU workers: {mp.cpu_count() - 1}")
             
             gp = GeneticProgramming(
-                population_size=200,
+                population_size=50,
                 max_generations=1000000,
                 parent_selection_rate=0.16,
                 mutation_rate=0.3,
