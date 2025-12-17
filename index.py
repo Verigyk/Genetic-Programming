@@ -178,14 +178,16 @@ class CSVDataLoader:
                     continue
                 
                 # Charger le CSV
-                df = pd.read_csv(file_path)
                 
                 # Définir l'index selon le fichier
                 id_col = "Hugo_Symbol"
 
                 if file_name == "data_linear_cna.csv" or file_name == "data_methylation_hm450.csv":
+                    df = pd.read_csv(file_path, sep='\s+')
                     df.drop('Entrez_Gene_Id', axis=1, inplace=True)
                     df = df.T
+                else:
+                    df = pd.read_csv(file_path)
                 
                 if file_name == "everything.csv":
                     print("Définition de y")
