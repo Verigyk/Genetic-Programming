@@ -94,7 +94,7 @@ try:
     
     # Vérifier si TPU est disponible
     TPU_AVAILABLE = len(jax.devices('tpu')) > 0
-    TPU_AVAILABLE = False
+    #TPU_AVAILABLE = False
     
     if TPU_AVAILABLE:
         print(f"✓ TPU disponible: {len(jax.devices('tpu'))} device(s)")
