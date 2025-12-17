@@ -178,14 +178,17 @@ class CSVDataLoader:
                     continue
                 
                 # Charger le CSV
-                
+                df = 0
+
                 # Définir l'index selon le fichier
                 id_col = "Hugo_Symbol"
 
                 if file_name == "data_linear_cna.csv" or file_name == "data_methylation_hm450.csv":
-                    df = pd.read_csv(file_path, sep='\s+')
+                    df = pd.read_csv(file_path, sep=r'\s+', index_col=0)
                     df.drop('Entrez_Gene_Id', axis=1, inplace=True)
                     df = df.T
+
+                    print(df)
                 else:
                     df = pd.read_csv(file_path)
                 
