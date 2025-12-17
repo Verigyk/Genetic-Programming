@@ -19,6 +19,8 @@ import multiprocessing as mp
 from functools import partial, reduce
 import os
 
+import tqdm
+
 ajcc_n_stage_map = {
     # 0. Négatif / Meilleur pronostic
     'N0': 0,
@@ -579,14 +581,6 @@ class GeneticProgramming:
         else:
             self.n_jobs = max(1, n_jobs)
         
-        # Afficher configuration
-        accelerator = "TPU" if self.use_tpu else ("GPU" if self.use_gpu else "CPU")
-        print(f"Configuration d'accélération:")
-        print(f"  - Accélérateur: {accelerator}")
-        if self.use_tpu:
-            print(f"  - TPU devices: {len(jax.devices('tpu'))}")
-        print(f"  - CPU workers: {self.n_jobs}")
-        
         # Feature selection algorithms selon le papier
         if feature_algos is None:
             self.feature_algos = [
@@ -611,6 +605,8 @@ class GeneticProgramming:
         self.best_individual: Optional[TreeNode] = None
         self.best_fitness: float = 0.0
         self.generation: int = 0
+
+        self.pbar = tqdm(total=self.max_generations)
     
     def _create_random_tree(self, max_depth: int, parent_omics: List[str] = None) -> TreeNode:
         """
@@ -713,6 +709,8 @@ class GeneticProgramming:
         
         avg_fitness = sum(self.fitness_scores) / len(self.fitness_scores)
         print(f"Fitness moyenne: {avg_fitness:.4f}, Meilleure fitness: {self.best_fitness:.4f}, Fitness train : {self.best_train_fitness:.4f}")
+
+        pbar.refresh() 
     
     @staticmethod
     def _evaluate_fitness_wrapper(individual: TreeNode, 
@@ -1112,6 +1110,7 @@ class GeneticProgramming:
             with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
                 crossover_func = partial(
                     self._crossover_pair_wrapper,
+                    self.pbar,
                     parents=parents
                 )
                 
@@ -1145,7 +1144,7 @@ class GeneticProgramming:
         return offspring[:target_size]
     
     @staticmethod
-    def _crossover_pair_wrapper(idx: int, parents: List[TreeNode]) -> Tuple[TreeNode, TreeNode]:
+    def _crossover_pair_wrapper(pbar, idx: int, parents: List[TreeNode]) -> Tuple[TreeNode, TreeNode]:
         """Wrapper pour crossover d'une paire (pour parallélisation)"""
         parent1, parent2 = random.sample(parents, 2)
         
@@ -1156,6 +1155,8 @@ class GeneticProgramming:
             return GeneticProgramming._crossover_same_depth_static(parent1, parent2)
         else:
             return GeneticProgramming._crossover_different_depth_static(parent1, parent2)
+        
+        pbar.update(1)
     
     @staticmethod
     def _crossover_same_depth_static(parent1: TreeNode, 
@@ -1438,9 +1439,17 @@ if __name__ == "__main__":
             
             # Extraire les types d'omics disponibles
             available_omics = loader.files
+
+            # Afficher configuration
+            accelerator = "TPU" if TPU_AVAILABLE else ("GPU" if GPU_AVAILABLE else "CPU")
+            print(f"Configuration d'accélération:")
+            print(f"  - Accélérateur: {accelerator}")
+            if TPU_AVAILABLE:
+                print(f"  - TPU devices: {len(jax.devices('tpu'))}")
+            print(f"  - CPU workers: {mp.cpu_count() - 1}")
             
             gp = GeneticProgramming(
-                population_size=100,
+                population_size=200,
                 max_generations=100,
                 parent_selection_rate=0.16,
                 mutation_rate=0.3,
@@ -1454,8 +1463,8 @@ if __name__ == "__main__":
                 dataframes=loader.data_frames,
                 y = loader.y,
                 n_folds=3,
-                use_gpu=True,
-                use_tpu=False,
+                use_gpu=GPU_AVAILABLE,
+                use_tpu=TPU_AVAILABLE,
                 n_jobs=-1
             )
             
