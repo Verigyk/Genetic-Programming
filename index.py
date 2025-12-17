@@ -760,20 +760,21 @@ class GeneticProgramming:
         Retourne le C-index moyen
         """
         try:
-            integrated_features = self._integrate_and_select_features(
-                individual, self.y
-            )
-            
-            # Vérifier que nous avons des features
-            if integrated_features.size == 0 or integrated_features.shape[1] == 0:
-                return 0.0, 0.0
-            
             # Validation croisée 5-fold
             kf = KFold(n_splits=self.n_folds, shuffle=True, random_state=42)
             c_indices = []
             c_indices_train = []
             
-            for train_idx, val_idx in kf.split(integrated_features):
+            for train_idx, val_idx in kf.split(self.data_frames['everything.csv'].shape[0]):
+
+                integrated_features = self._integrate_and_select_features(
+                    individual, train_idx, self.y.iloc[train_idx]
+                )
+                
+                # Vérifier que nous avons des features
+                if integrated_features.size == 0 or integrated_features.shape[1] == 0:
+                    return 0.0, 0.0
+
                 X_train = integrated_features[train_idx]
                 X_val = integrated_features[val_idx]
                 
@@ -859,7 +860,7 @@ class GeneticProgramming:
         
         return score
     
-    def _integrate_and_select_features(self, individual: TreeNode, 
+    def _integrate_and_select_features(self, individual: TreeNode, index,
                                       y: np.ndarray) -> np.ndarray:
         """
         Intègre les données multi-omics selon l'arbre chromosomique (bottom-up)
@@ -874,7 +875,7 @@ class GeneticProgramming:
                     if node.omics_type == None:
                         return np.array([])
 
-                    features = self.dataframes[node.omics_type]
+                    features = self.dataframes[node.omics_type].iloc[index]
 
                     # CORRECTION : Convertir DataFrame en numpy array
                     if isinstance(features, pd.DataFrame):
