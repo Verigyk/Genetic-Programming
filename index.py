@@ -189,8 +189,6 @@ class CSVDataLoader:
 
                     df.drop("Entrez_Gene_Id", inplace=True)
                     df = df.dropna()
-
-                    print(df)
                 else:
                     df = pd.read_csv(file_path)
                 
@@ -1461,7 +1459,7 @@ if __name__ == "__main__":
                 fitness_threshold=0.95,
                 max_depth_range=(1, 3),
                 max_children_range=(1, 3),
-                feature_range=(5, 90),
+                feature_range=(5, 1000),
                 use_real_fitness=SKSURV_AVAILABLE,  # Active si disponible
                 dataframes=loader.data_frames,
                 y = loader.y,
