@@ -19,6 +19,8 @@ import multiprocessing as mp
 from functools import partial, reduce
 import os
 
+import math
+
 ajcc_n_stage_map = {
     # 0. Négatif / Meilleur pronostic
     'N0': 0,
@@ -1215,7 +1217,6 @@ class GeneticProgramming:
                 offspring.extend([ind[0] for ind in mutated_offspring])
                 
                 # Compter les mutations
-                print([ind[1] for ind in mutated_offspring])
                 mutated_count = sum(ind[1] for ind in mutated_offspring)
                 print(f"Mutation appliquée à {mutated_count} noeuds")
         else:
@@ -1280,7 +1281,7 @@ class GeneticProgramming:
                     used_omics = []
                     for _ in range(num_children):
                         child = GeneticProgramming._create_random_tree_wrapper(
-                            max_depth=max_depth,
+                            max_depth=max(max_depth, 1),
                             max_depth_range=(0, max_depth),
                             max_children_range=max_children_range,
                             feature_algos=feature_algos,
