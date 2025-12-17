@@ -766,8 +766,9 @@ class GeneticProgramming:
             c_indices_train = []
             
             print(self.dataframes['everything.csv'].shape[0])
-            for train_idx, val_idx in kf.split(range(self.dataframes['everything.csv'].shape[0] - 1)):
-
+            for train_idx, val_idx in kf.split(range(self.dataframes['everything.csv'].shape[0])):
+                
+                print(train_idx)
                 integrated_features = self._integrate_and_select_features(
                     individual, train_idx, self.y.iloc[train_idx]
                 )
