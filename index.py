@@ -19,7 +19,7 @@ import multiprocessing as mp
 from functools import partial, reduce
 import os
 
-import tqdm
+from tqdm import tqdm
 
 ajcc_n_stage_map = {
     # 0. Négatif / Meilleur pronostic
