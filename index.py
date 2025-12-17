@@ -19,8 +19,6 @@ import multiprocessing as mp
 from functools import partial, reduce
 import os
 
-from tqdm import tqdm
-
 ajcc_n_stage_map = {
     # 0. Négatif / Meilleur pronostic
     'N0': 0,
@@ -605,8 +603,6 @@ class GeneticProgramming:
         self.best_individual: Optional[TreeNode] = None
         self.best_fitness: float = 0.0
         self.generation: int = 0
-
-        self.pbar = tqdm(total=self.max_generations)
     
     def _create_random_tree(self, max_depth: int, parent_omics: List[str] = None) -> TreeNode:
         """
@@ -709,8 +705,6 @@ class GeneticProgramming:
         
         avg_fitness = sum(self.fitness_scores) / len(self.fitness_scores)
         print(f"Fitness moyenne: {avg_fitness:.4f}, Meilleure fitness: {self.best_fitness:.4f}, Fitness train : {self.best_train_fitness:.4f}")
-
-        pbar.refresh() 
     
     @staticmethod
     def _evaluate_fitness_wrapper(individual: TreeNode, 
@@ -1110,7 +1104,6 @@ class GeneticProgramming:
             with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
                 crossover_func = partial(
                     self._crossover_pair_wrapper,
-                    self.pbar,
                     parents=parents
                 )
                 
@@ -1144,7 +1137,7 @@ class GeneticProgramming:
         return offspring[:target_size]
     
     @staticmethod
-    def _crossover_pair_wrapper(pbar, idx: int, parents: List[TreeNode]) -> Tuple[TreeNode, TreeNode]:
+    def _crossover_pair_wrapper(idx: int, parents: List[TreeNode]) -> Tuple[TreeNode, TreeNode]:
         """Wrapper pour crossover d'une paire (pour parallélisation)"""
         parent1, parent2 = random.sample(parents, 2)
         
@@ -1155,8 +1148,6 @@ class GeneticProgramming:
             return GeneticProgramming._crossover_same_depth_static(parent1, parent2)
         else:
             return GeneticProgramming._crossover_different_depth_static(parent1, parent2)
-        
-        pbar.update(1)
     
     @staticmethod
     def _crossover_same_depth_static(parent1: TreeNode, 
