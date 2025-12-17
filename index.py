@@ -182,6 +182,10 @@ class CSVDataLoader:
                 
                 # Définir l'index selon le fichier
                 id_col = "Hugo_Symbol"
+
+                if file_name == "data_linear_cna.csv" or file_name == "data_methylation_hm450.csv":
+                    df.drop('Entrez_Gene_Id', axis=1, inplace=True)
+                    df = df.T
                 
                 if file_name == "everything.csv":
                     print("Définition de y")
@@ -591,7 +595,7 @@ class GeneticProgramming:
             self.feature_algos = feature_algos
         
         # Types d'omics selon le papier
-        self.omics_types = ['everything.csv', 'oncotype21.csv', 'pam50.csv']
+        self.omics_types = ['everything.csv', 'oncotype21.csv', 'pam50.csv', 'data_methylation_hm450.csv', 'data_linear_cna.csv']
         
         # Configuration pour fitness réelle
         self.use_real_fitness = use_real_fitness and SKSURV_AVAILABLE
@@ -1398,7 +1402,7 @@ if __name__ == "__main__":
     print("-"*60)
     
     # Spécifier le répertoire contenant vos fichiers CSV
-    data_directory = "./data"  # MODIFIEZ CE CHEMIN
+    data_directory = "/kaggle/input/datasetdead"  # MODIFIEZ CE CHEMIN
     
     # Vérifier si le répertoire existe
     if os.path.exists(data_directory):
@@ -1413,8 +1417,8 @@ if __name__ == "__main__":
                     'everything.csv',
                     'oncotype21.csv',
                     'pam50.csv',
-                    'union_pam50_oncotype.csv',
-                    'intersection_pam50_oncotype.csv'
+                    'data_linear_cna.csv',
+                    'data_methylation_hm450.csv'
                 ],
                 generate_synthetic_survival=True  # Générer si absent
             )
